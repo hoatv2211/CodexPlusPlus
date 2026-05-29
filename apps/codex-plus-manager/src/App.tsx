@@ -2411,12 +2411,15 @@ function RelayProfileDetail({
   }, [profile.id, isActive, isNew, relayFiles?.configContents, relayFiles?.authContents]);
   const saveDraft = async () => {
     const liveFiles = isActive ? await actions.refreshRelayFiles() : null;
+    // For non-active profiles, capture auth from .codex if profile has no saved auth
+    const shouldCaptureFromCodex = !isActive && !draft.authContents?.trim();
+    const capturedLiveFiles = shouldCaptureFromCodex ? await actions.refreshRelayFiles() : liveFiles;
     const draftForSave =
-      isActive && liveFiles
+      (isActive && liveFiles) || (shouldCaptureFromCodex && capturedLiveFiles)
         ? deriveRelayProfileFromFiles({
           ...draft,
-          configContents: liveFiles.configContents,
-          authContents: liveFiles.authContents,
+          configContents: (isActive && liveFiles ? liveFiles : capturedLiveFiles)?.configContents ?? draft.configContents,
+          authContents: (isActive && liveFiles ? liveFiles : capturedLiveFiles)?.authContents ?? draft.authContents,
         })
         : deriveRelayProfileFromFiles(draft);
     const normalizedDraft = draftForSave;
@@ -2424,6 +2427,7 @@ function RelayProfileDetail({
       ? addRelayProfile(form, normalizedDraft)
       : updateRelayProfile(form, profile.id, normalizedDraft);
     onFormChange(next);
+    await actions.saveSettingsValue(next, true);
     if (isActive) {
       await actions.saveRelayFile(
         "config",
