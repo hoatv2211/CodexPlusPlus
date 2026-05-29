@@ -17,3 +17,4 @@ docs/superpowers/
 *.log
 .DS_Store
 Thumbs.db
+/apps/codex-plus-manager/node_modules

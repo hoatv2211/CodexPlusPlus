@@ -6,7 +6,7 @@ pub mod macos;
 pub mod windows;
 
 pub const SILENT_NAME: &str = "Codex++";
-pub const MANAGER_NAME: &str = "Codex++ 管理工具";
+pub const MANAGER_NAME: &str = "Codex++ Quan ly";
 pub const SILENT_BINARY: &str = "codex-plus-plus";
 pub const MANAGER_BINARY: &str = "codex-plus-plus-manager";
 
@@ -70,11 +70,11 @@ impl ShortcutState {
 }
 
 pub fn shortcut_names() -> (&'static str, &'static str) {
-    ("Codex++.lnk", "Codex++ 管理工具.lnk")
+    ("Codex++.lnk", "Codex++ Quan ly.lnk")
 }
 
 pub fn app_bundle_names() -> (&'static str, &'static str) {
-    ("Codex++.app", "Codex++ 管理工具.app")
+    ("Codex++.app", "Codex++ Quan ly.app")
 }
 
 pub fn inspect_entrypoints() -> EntryPointState {
@@ -87,7 +87,7 @@ pub fn inspect_entrypoints() -> EntryPointState {
 
 pub fn install_entrypoints(options: &InstallOptions) -> InstallActionResult {
     let result = platform_install(options);
-    action_result(result, "入口已安装。")
+    action_result(result, "Da cai dat shortcut.")
 }
 
 pub fn uninstall_entrypoints(options: &InstallOptions) -> InstallActionResult {
@@ -95,12 +95,12 @@ pub fn uninstall_entrypoints(options: &InstallOptions) -> InstallActionResult {
     if result.is_ok() && options.remove_owned_data {
         let _ = remove_owned_data();
     }
-    action_result(result, "入口已卸载。")
+    action_result(result, "Da go shortcut.")
 }
 
 pub fn repair_entrypoints(options: &InstallOptions) -> InstallActionResult {
     let result = platform_install(options);
-    action_result(result, "入口已修复。")
+    action_result(result, "Da sua shortcut.")
 }
 
 pub fn build_windows_entrypoint_plan(options: &InstallOptions) -> windows::WindowsEntrypointPlan {
@@ -162,7 +162,7 @@ fn platform_install(options: &InstallOptions) -> anyhow::Result<()> {
     #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = options;
-        anyhow::bail!("当前平台暂不支持安装 Codex++ 入口")
+        anyhow::bail!("Nen tang hien tai chua ho tro cai shortcut Codex++")
     }
 }
 
@@ -180,7 +180,7 @@ fn platform_uninstall(options: &InstallOptions) -> anyhow::Result<()> {
     #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = options;
-        anyhow::bail!("当前平台暂不支持卸载 Codex++ 入口")
+        anyhow::bail!("Nen tang hien tai chua ho tro go shortcut Codex++")
     }
 }
 

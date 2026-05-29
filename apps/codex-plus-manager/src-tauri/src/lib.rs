@@ -13,6 +13,10 @@ pub fn run() {
         return;
     };
     let show_update = commands::startup_should_show_update();
+    let settings = codex_plus_core::settings::SettingsStore::default()
+        .load()
+        .unwrap_or_default();
+    let window_title = manager_window_title(settings.language);
     let run_result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
@@ -22,7 +26,7 @@ pub fn run() {
                 "index.html"
             };
             tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App(url.into()))
-                .title("Codex++ 管理工具")
+                .title(window_title)
                 .inner_size(1180.0, 820.0)
                 .min_inner_size(960.0, 720.0)
                 .build()?;
@@ -84,6 +88,13 @@ pub fn run() {
                 "error": error.to_string()
             }),
         );
+    }
+}
+
+fn manager_window_title(language: codex_plus_core::settings::AppLanguage) -> &'static str {
+    match language {
+        codex_plus_core::settings::AppLanguage::Vi => "Codex++ Quản lý",
+        codex_plus_core::settings::AppLanguage::En => "Codex++ Manager",
     }
 }
 

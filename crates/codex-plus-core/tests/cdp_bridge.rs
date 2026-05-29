@@ -85,7 +85,7 @@ fn injection_script_times_out_backend_bridge_calls_and_falls_back_to_helper() {
 fn injection_script_explains_plugin_patch_is_unneeded_in_relay_mode() {
     let script = assets::injection_script(57321);
 
-    assert!(script.contains("兼容增强模式下无需开启"));
+    assert!(script.contains("Không cần bật ở chế độ tương thích"));
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn injection_script_exposes_conversation_view_width_control() {
     assert!(script.contains("conversationView: false"));
     assert!(script.contains("conversationView"));
     assert!(script.contains("conversationViewMaxWidth"));
-    assert!(script.contains("对话居中宽度"));
+    assert!(script.contains("Độ rộng hội thoại căn giữa"));
     assert!(script.contains("data-codex-plus-conversation-view-width"));
     assert!(script.contains("conversationViewWidth()"));
     assert!(script.contains("normalizeConversationViewWidth"));

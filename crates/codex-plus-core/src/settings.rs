@@ -79,7 +79,7 @@ impl Default for RelayProfile {
     fn default() -> Self {
         Self {
             id: "default".to_string(),
-            name: "默认中转".to_string(),
+            name: "Trung chuyen mac dinh".to_string(),
             model: String::new(),
             base_url: default_relay_base_url(),
             upstream_base_url: String::new(),
@@ -126,8 +126,18 @@ pub enum RelayMode {
     PureApi,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AppLanguage {
+    #[default]
+    Vi,
+    En,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BackendSettings {
+    #[serde(default)]
+    pub language: AppLanguage,
     #[serde(rename = "codexAppPath", default)]
     pub codex_app_path: String,
     #[serde(rename = "codexExtraArgs", default)]
@@ -171,6 +181,7 @@ pub struct BackendSettings {
 impl Default for BackendSettings {
     fn default() -> Self {
         Self {
+            language: AppLanguage::Vi,
             codex_app_path: String::new(),
             codex_extra_args: Vec::new(),
             provider_sync_enabled: false,
@@ -201,7 +212,7 @@ impl BackendSettings {
         {
             return RelayProfile {
                 id: default_active_relay_id(),
-                name: "默认中转".to_string(),
+                name: "Trung chuyen mac dinh".to_string(),
                 model: String::new(),
                 base_url: if self.relay_base_url.is_empty() {
                     default_relay_base_url()
@@ -244,7 +255,7 @@ impl BackendSettings {
             } else {
                 self.active_relay_id.clone()
             },
-            name: "默认中转".to_string(),
+            name: "Trung chuyen mac dinh".to_string(),
             model: String::new(),
             base_url: if self.relay_base_url.is_empty() {
                 default_relay_base_url()
@@ -946,6 +957,41 @@ requires_openai_auth = true
 
         assert_eq!(updated.launch_mode, LaunchMode::Relay);
         assert_eq!(saved["launchMode"], json!("relay"));
+    }
+
+    #[test]
+    fn settings_default_language_is_vietnamese() {
+        let settings = BackendSettings::default();
+        assert_eq!(settings.language, AppLanguage::Vi);
+    }
+
+    #[test]
+    fn settings_deserialize_missing_language_defaults_to_vietnamese() {
+        let settings: BackendSettings = serde_json::from_str(
+            r#"{
+                "codexAppPath": "",
+                "relayTestModel": "gpt-5.4-mini"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(settings.language, AppLanguage::Vi);
+    }
+
+    #[test]
+    fn settings_store_save_load_roundtrip_persists_language() {
+        let dir = temp_dir();
+        let path = dir.join("settings.json");
+        let store = SettingsStore::new(path);
+
+        let settings = BackendSettings {
+            language: AppLanguage::En,
+            ..BackendSettings::default()
+        };
+
+        store.save(&settings).unwrap();
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.language, AppLanguage::En);
     }
 
     #[test]

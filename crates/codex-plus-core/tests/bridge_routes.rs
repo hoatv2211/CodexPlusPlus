@@ -9,7 +9,7 @@ use codex_plus_core::routes::{
     BridgeContext, BridgeDataService, BridgeRuntimeService, BridgeSettingsService,
     CoreRuntimeService, handle_bridge_request,
 };
-use codex_plus_core::settings::BackendSettings;
+use codex_plus_core::settings::{BackendSettings, RelayProfile};
 use codex_plus_core::status::StatusStore;
 use codex_plus_core::user_scripts::UserScriptManager;
 use serde_json::{Value, json};
@@ -21,6 +21,8 @@ async fn bridge_routes_cover_all_current_paths() {
     let cases = [
         ("/settings/get", json!({})),
         ("/settings/set", json!({"providerSyncEnabled": true})),
+        ("/accounts/list", json!({})),
+        ("/accounts/switch", json!({"profileId": "default"})),
         ("/user-scripts/list", json!({})),
         ("/user-scripts/set-enabled", json!({"enabled": false})),
         (
@@ -175,6 +177,49 @@ async fn settings_routes_use_settings_service() {
     assert_eq!(updated["providerSyncEnabled"], true);
     assert_eq!(updated["cliWrapperApiKeyEnv"], "CUSTOM_OPENAI_API_KEY");
     assert_eq!(loaded, updated);
+}
+
+#[tokio::test]
+async fn account_routes_list_and_switch_saved_profiles() {
+    let ctx = test_context_with_settings(BackendSettings {
+        active_relay_id: "account-a".to_string(),
+        relay_profiles: vec![
+            RelayProfile {
+                id: "account-a".to_string(),
+                name: "Tai khoan A".to_string(),
+                config_contents: "model = \"gpt-5\"\n".to_string(),
+                auth_contents: "{\"auth_mode\":\"chatgpt-a\"}".to_string(),
+                ..RelayProfile::default()
+            },
+            RelayProfile {
+                id: "account-b".to_string(),
+                name: "Tai khoan B".to_string(),
+                config_contents: "model = \"gpt-5-mini\"\n".to_string(),
+                auth_contents: "{\"auth_mode\":\"chatgpt-b\"}".to_string(),
+                ..RelayProfile::default()
+            },
+        ],
+        ..BackendSettings::default()
+    });
+
+    let listed = handle_bridge_request(ctx.clone(), "/accounts/list", json!({})).await;
+    assert_eq!(listed["status"], "ok");
+    assert_eq!(listed["activeProfileId"], "account-a");
+    assert_eq!(listed["accounts"][0]["name"], "Tai khoan A");
+    assert_eq!(listed["accounts"][1]["active"], false);
+
+    let switched = handle_bridge_request(
+        ctx.clone(),
+        "/accounts/switch",
+        json!({"profileId": "account-b"}),
+    )
+    .await;
+    assert_eq!(switched["status"], "ok");
+    assert_eq!(switched["activeProfileId"], "account-b");
+    assert_eq!(switched["activeProfileName"], "Tai khoan B");
+
+    let loaded = handle_bridge_request(ctx, "/settings/get", json!({})).await;
+    assert_eq!(loaded["activeRelayId"], "account-b");
 }
 
 #[tokio::test]
@@ -772,8 +817,12 @@ async fn launch_lifecycle_uses_hook_supplied_bridge_context_for_injection() {
 }
 
 fn test_context() -> BridgeContext {
+    test_context_with_settings(BackendSettings::default())
+}
+
+fn test_context_with_settings(settings: BackendSettings) -> BridgeContext {
     BridgeContext::new(
-        Arc::new(FakeSettings::default()),
+        Arc::new(FakeSettings::new(settings)),
         Arc::new(FakeRuntime::default()),
         Arc::new(FakeData::default()),
     )
@@ -782,6 +831,14 @@ fn test_context() -> BridgeContext {
 #[derive(Default)]
 struct FakeSettings {
     settings: Mutex<BackendSettings>,
+}
+
+impl FakeSettings {
+    fn new(settings: BackendSettings) -> Self {
+        Self {
+            settings: Mutex::new(settings),
+        }
+    }
 }
 
 #[async_trait]
@@ -822,6 +879,39 @@ impl BridgeSettingsService for FakeSettings {
         let updated: BackendSettings = serde_json::from_value(Value::Object(raw.clone())).unwrap();
         *self.settings.lock().unwrap() = updated.clone();
         Ok(updated)
+    }
+
+    async fn saved_accounts(&self) -> anyhow::Result<Value> {
+        let settings = self.settings.lock().unwrap().clone();
+        Ok(json!({
+            "status": "ok",
+            "activeProfileId": settings.active_relay_id,
+            "accounts": settings.relay_profiles.iter().map(|profile| json!({
+                "id": profile.id,
+                "name": profile.name,
+                "relayMode": profile.relay_mode,
+                "active": profile.id == settings.active_relay_id,
+                "hasConfig": !profile.config_contents.trim().is_empty(),
+                "hasAuth": !profile.auth_contents.trim().is_empty(),
+            })).collect::<Vec<_>>()
+        }))
+    }
+
+    async fn switch_saved_account(&self, profile_id: String) -> anyhow::Result<Value> {
+        let mut settings = self.settings.lock().unwrap();
+        let profile = settings
+            .relay_profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Khong tim thay tai khoan da luu: {profile_id}"))?;
+        settings.active_relay_id = profile.id.clone();
+        Ok(json!({
+            "status": "ok",
+            "message": "Da chuyen tai khoan. Khoi dong lai Codex neu phien hien tai chua doi ngay.",
+            "activeProfileId": profile.id,
+            "activeProfileName": profile.name,
+        }))
     }
 }
 

@@ -104,7 +104,7 @@ fn macos_packager_hides_silent_launcher_but_not_manager() {
         "create_app \"Codex++\" \"CodexPlusPlus\" \"$BINARY_DIR/codex-plus-plus\" \"com.bigpizzav3.codexplusplus\" \"true\""
     ));
     assert!(script.contains(
-        "create_app \"Codex++ 管理工具\" \"CodexPlusPlusManager\" \"$BINARY_DIR/codex-plus-plus-manager\" \"com.bigpizzav3.codexplusplus.manager\" \"false\""
+        "create_app \"Codex++ Quan ly\" \"CodexPlusPlusManager\" \"$BINARY_DIR/codex-plus-plus-manager\" \"com.bigpizzav3.codexplusplus.manager\" \"false\""
     ));
 }
 
@@ -153,8 +153,12 @@ fn relay_settings_keeps_profile_config_and_auth_files_isolated() {
 
     assert!(app_tsx.contains("snapshotActiveRelayFilesBeforeSwitch"));
     assert!(app_tsx.contains("backfill_relay_profile_from_live"));
+    assert!(app_tsx.contains("const liveFiles = isActive ? await actions.refreshRelayFiles() : null"));
+    assert!(app_tsx.contains("const draftForSave ="));
+    assert!(app_tsx.contains("configContents: liveFiles.configContents"));
+    assert!(app_tsx.contains("authContents: liveFiles.authContents"));
     assert!(app_tsx.contains("relayProfileSwitchValidation(selectedBeforeSave)"));
-    assert!(app_tsx.contains("缺少独立 config.toml"));
+    assert!(app_tsx.contains("dang thieu config.toml rieng"));
     assert!(app_tsx.contains("const command = relayProfileSwitchCommand(selectedAfterSave)"));
     assert!(!commands_rs.contains("缺少独立 auth.json"));
     assert!(commands_rs.contains("backfill_relay_profile_from_live"));
@@ -170,8 +174,8 @@ fn relay_context_management_is_global_not_supplier_scoped() {
     let styles = std::fs::read_to_string(&styles).expect("read manager styles.css");
 
     assert!(app_tsx.contains("作为全局配置独立管理"));
-    assert!(app_tsx.contains("label: \"工具与插件\""));
-    assert!(app_tsx.contains("title=\"Codex 工具与插件\""));
+    assert!(app_tsx.contains("label: \"Tools and Plugins\""));
+    assert!(app_tsx.contains("title=\"Codex 工具与插件\"") || app_tsx.contains("title=\"Codex Tools and Plugins\""));
     assert!(!app_tsx.contains("label: \"上下文配置\""));
     assert!(!app_tsx.contains("title=\"上下文配置\""));
     assert!(!app_tsx.contains("<strong>Codex 上下文</strong>"));
@@ -222,7 +226,7 @@ fn manager_window_and_relay_detail_header_stay_usable() {
     assert!(styles.contains(".relay-detail-sticky"));
     assert!(styles.contains("position: sticky"));
     assert!(styles.contains("top: 0"));
-    assert!(styles.contains("margin: -16px -20px 0"));
+    assert!(styles.contains("margin: 0;"));
     assert!(lib_rs.contains(".inner_size(1180.0, 820.0)"));
     assert!(lib_rs.contains(".min_inner_size(960.0, 720.0)"));
     assert!(tauri_conf.contains("\"width\": 1180"));
@@ -240,4 +244,37 @@ fn relay_preview_deduplicates_root_keys_when_merging_common_config() {
     assert!(app_tsx.contains("dedupeTomlRootLines"));
     assert!(app_tsx.contains("rootSeen.add(key)"));
     assert!(app_tsx.contains("joinTomlSectionsRootFirst"));
+}
+
+#[test]
+fn manager_app_contains_language_selector_and_translation_helper() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let app_tsx = manifest_dir.parent().unwrap().join("src/App.tsx");
+    let app_tsx = std::fs::read_to_string(&app_tsx).expect("read manager App.tsx");
+
+    assert!(app_tsx.contains("function t(") || app_tsx.contains("const t ="));
+    assert!(app_tsx.contains("settings.language"));
+    assert!(app_tsx.contains("Tiếng Việt"));
+    assert!(app_tsx.contains("English"));
+}
+
+#[test]
+fn manager_common_ui_copy_no_longer_uses_chinese_navigation_labels() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let app_tsx = manifest_dir.parent().unwrap().join("src/App.tsx");
+    let app_tsx = std::fs::read_to_string(&app_tsx).expect("read manager App.tsx");
+
+    assert!(!app_tsx.contains("概览"));
+    assert!(!app_tsx.contains("设置"));
+    assert!(!app_tsx.contains("管理控制台"));
+}
+
+#[test]
+fn manager_window_title_is_no_longer_hardcoded_in_chinese() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_rs =
+        std::fs::read_to_string(manifest_dir.join("src/lib.rs")).expect("read manager lib.rs");
+
+    assert!(!lib_rs.contains("管理工具"));
+    assert!(lib_rs.contains("manager_window_title"));
 }

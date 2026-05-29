@@ -617,7 +617,7 @@ async fn handle_helper_connection(
                 "200 OK".to_string(),
                 serde_json::to_vec(&serde_json::json!({
                     "status": "ok",
-                    "message": "后端已连接",
+                    "message": "Backend da ket noi",
                     "version": crate::version::VERSION,
                     "transport": "http-helper"
                 }))?,
@@ -651,7 +651,7 @@ async fn handle_helper_connection(
                 "200 OK".to_string(),
                 serde_json::to_vec(&serde_json::json!({
                     "status": "ok",
-                    "message": "日志已记录"
+                    "message": "Da ghi log"
                 }))?,
                 "application/json; charset=utf-8".to_string(),
                 "helper.diagnostics_log_ok",
@@ -661,7 +661,7 @@ async fn handle_helper_connection(
                 "404 Not Found".to_string(),
                 serde_json::to_vec(&serde_json::json!({
                     "status": "failed",
-                    "message": "未知后端路径"
+                    "message": "Duong dan backend khong hop le"
                 }))?,
                 "application/json; charset=utf-8".to_string(),
                 "helper.unknown_path",

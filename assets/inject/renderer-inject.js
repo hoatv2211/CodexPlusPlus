@@ -430,7 +430,6 @@
         pointer-events: auto;
         -webkit-app-region: no-drag;
       }
-      .codex-plus-modal-content[data-codex-plus-active-tab="support"] { width: min(820px, calc(100vw - 48px)); }
       .codex-plus-modal-header {
         display: flex;
         align-items: center;
@@ -483,6 +482,18 @@
       .codex-plus-row:first-child { border-top: 0; }
       .codex-plus-row-title { font-weight: 550; line-height: 1.35; }
       .codex-plus-row-description { margin-top: 2px; color: #a1a1aa; font-size: 12px; line-height: 1.4; }
+      .codex-plus-account-list { display: flex; flex-direction: column; gap: 8px; min-width: 220px; max-width: 320px; }
+      .codex-plus-account-button {
+        display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        width: 100%; border: 1px solid rgba(255,255,255,.14); border-radius: 8px;
+        padding: 9px 10px; color: rgba(255,255,255,.92); background: rgba(255,255,255,.06);
+        cursor: pointer; text-align: left; font-size: 12px;
+      }
+      .codex-plus-account-button:hover { background: rgba(255,255,255,.1); }
+      .codex-plus-account-button[data-active="true"] { border-color: rgba(16,185,129,.5); background: rgba(16,185,129,.16); cursor: default; }
+      .codex-plus-account-button[disabled] { opacity: .62; cursor: not-allowed; }
+      .codex-plus-account-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+      .codex-plus-account-status { flex: 0 0 auto; color: rgba(255,255,255,.7); font-size: 11px; }
       .codex-plus-model-compat-warning { margin-top: 6px; color: #fbbf24; font-size: 12px; line-height: 1.45; }
       .codex-plus-toggle {
         width: 42px;
@@ -624,10 +635,6 @@
       .codex-plus-ad-highlights span { border: 1px solid rgba(255,255,255,.14); border-radius: 999px; background: rgba(255,255,255,.08); color: #f3f4f6; font-size: 12px; padding: 4px 8px; }
       .codex-plus-ad-link { display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; background: #2563eb; color: #ffffff; font-size: 13px; font-weight: 650; text-decoration: none; padding: 8px 12px; }
       .codex-plus-ad-empty { border: 1px dashed rgba(255,255,255,.16); border-radius: 12px; color: #9ca3af; font-size: 13px; padding: 12px; text-align: center; }
-      .codex-plus-sponsor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-      .codex-plus-sponsor-card { border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 10px; background: rgba(255,255,255,.04); text-align: center; }
-      .codex-plus-sponsor-card-title { color: #f3f4f6; font-size: 13px; margin-bottom: 8px; }
-      .codex-plus-sponsor-qr { display: block; width: 100%; max-width: 340px; border-radius: 8px; margin: 0 auto; background: white; }
       .${timelineClass} {
         position: fixed;
         top: calc(72px + 12px);
@@ -819,6 +826,7 @@
 
   let codexPlusBackendSettings = { providerSyncEnabled: false, enhancementsEnabled: true, launchMode: "patch" };
   let codexPlusBackendSettingsLoaded = false;
+  let codexPlusAccounts = { status: "loading", activeProfileId: "", accounts: [] };
   let codexServiceTierState = {
     status: "loading",
     serviceTier: null,
@@ -1132,18 +1140,18 @@
   }
 
   function codexServiceTierBadgeState() {
-    if (codexPlusBackendStatus.status === "checking") return { tier: "loading", label: "...", disabled: true, title: "服务模式：正在检查后端连接" };
-    if (codexPlusBackendStatus.status && codexPlusBackendStatus.status !== "ok") return { tier: "failed", label: "未连接", disabled: true, title: "服务模式：后端未连接，无法切换" };
-    if (codexServiceTierState.status === "loading") return { tier: "loading", label: "...", title: "服务模式：正在读取" };
-    if (codexServiceTierState.status === "failed") return { tier: "failed", label: "?", title: "服务模式：读取失败" };
+    if (codexPlusBackendStatus.status === "checking") return { tier: "loading", label: "...", disabled: true, title: "Chế độ dịch vụ: đang kiểm tra kết nối backend" };
+    if (codexPlusBackendStatus.status && codexPlusBackendStatus.status !== "ok") return { tier: "failed", label: "Chưa kết nối", disabled: true, title: "Chế độ dịch vụ: backend chưa kết nối, không thể chuyển" };
+    if (codexServiceTierState.status === "loading") return { tier: "loading", label: "...", title: "Chế độ dịch vụ: đang đọc" };
+    if (codexServiceTierState.status === "failed") return { tier: "failed", label: "?", title: "Chế độ dịch vụ: đọc thất bại" };
     const effectiveMode = codexServiceTierState.effectiveMode || "standard";
     const scope = codexServiceTierState.controlMode === "custom" && codexServiceTierState.threadMode !== "inherit"
-      ? `当前 thread：${codexServiceTierState.threadMode}`
+      ? `Thread hiện tại: ${codexServiceTierState.threadMode}`
       : serviceTierStatusMessage(codexServiceTierState.controlMode, codexServiceTierState.threadMode, effectiveMode, codexServiceTierState.defaultMode);
     const title = [
-      `服务模式：${scope}`,
-      "Standard：使用标准处理；不在请求上设置 priority。",
-      "Fast：对请求使用 service_tier=\"priority\"，官方说明其延迟更低且更一致，但会按更高价格计费；rate limit 与 Standard 共享，流量快速上涨时可能回落到 Standard。",
+      `Chế độ dịch vụ: ${scope}`,
+      "Standard: dùng xử lý tiêu chuẩn; không gắn priority vào request.",
+      "Fast: gửi request với service_tier=\"priority\". Theo mô tả chính thức, độ trễ thấp và ổn định hơn nhưng giá cao hơn; rate limit dùng chung với Standard và có thể rơi về Standard khi tải tăng mạnh.",
     ].join("\n");
     if (effectiveMode === "fast") return { tier: "fast", label: "fast", title };
     return { tier: "standard", label: "standard", title };
@@ -1171,8 +1179,8 @@
     document.querySelectorAll("[data-codex-service-tier-status]").forEach((node) => {
       node.dataset.status = featureEnabled && backendConnected ? (codexServiceTierState.status || "loading") : (backendChecking ? "loading" : "failed");
       node.textContent = featureEnabled
-        ? (backendConnected ? (codexServiceTierState.message || "未读取") : (backendChecking ? "正在检查后端…" : "未连接"))
-        : "未启用";
+        ? (backendConnected ? (codexServiceTierState.message || "Chưa đọc") : (backendChecking ? "Đang kiểm tra backend…" : "Chưa kết nối"))
+        : "Chưa bật";
     });
     document.querySelectorAll("[data-codex-service-tier-inherit]").forEach((button) => {
       button.disabled = !featureEnabled || !backendConnected || codexServiceTierState.status === "loading";
@@ -1193,7 +1201,7 @@
     document.querySelectorAll("[data-codex-service-tier-thread-inherit]").forEach((button) => {
       button.disabled = !featureEnabled || !backendConnected || codexServiceTierState.status === "loading";
       button.dataset.active = String(codexServiceTierState.controlMode === "custom" && codexServiceTierState.threadMode === "inherit");
-      button.title = `当前 thread 不单独覆盖，继承自定义默认 ${codexServiceTierState.defaultMode || "inherit"}`;
+      button.title = `Thread hiện tại không ghi đè riêng, kế thừa mặc định tùy chỉnh ${codexServiceTierState.defaultMode || "inherit"}`;
     });
     document.querySelectorAll("[data-codex-service-tier-thread-standard]").forEach((button) => {
       button.disabled = !featureEnabled || !backendConnected || codexServiceTierState.status === "loading";
@@ -1208,11 +1216,11 @@
 
   async function loadCodexServiceTierState() {
     if (!codexPlusSettings().serviceTierControls) {
-      codexServiceTierState = { ...codexServiceTierState, status: "idle", message: "未启用" };
+      codexServiceTierState = { ...codexServiceTierState, status: "idle", message: "Chưa bật" };
       refreshCodexServiceTierControls();
       return;
     }
-    codexServiceTierState = { ...codexServiceTierState, status: "loading", message: "正在读取…" };
+    codexServiceTierState = { ...codexServiceTierState, status: "loading", message: "Đang đọc…" };
     refreshCodexServiceTierControls();
     try {
       const serviceTier = await getCodexServiceTierSetting();
@@ -1226,7 +1234,7 @@
       codexServiceTierState = {
         ...codexServiceTierState,
         status: "failed",
-        message: "读取失败",
+        message: "Đọc thất bại",
       };
       sendCodexPlusDiagnostic("service_tier_read_failed", {
         errorName: error?.name || "",
@@ -1239,7 +1247,7 @@
 
   function setCodexThreadServiceTierMode(mode) {
     if (codexPlusBackendStatus.status !== "ok") {
-      showToast("后端未连接，无法切换服务模式", null);
+      showToast("Backend chưa kết nối, không thể chuyển chế độ dịch vụ", null);
       refreshCodexServiceTierControls();
       return;
     }
@@ -1247,13 +1255,13 @@
     const threadId = validThreadScrollSessionKey(currentSessionRef().session_id);
     setCodexThreadServiceTierOverride(threadId, normalizedMode);
     refreshCodexServiceTierControls();
-    const target = threadId ? "当前 thread" : "新 thread 草稿";
-    showToast(`${target}服务模式：${normalizedMode === "inherit" ? "继承" : normalizedMode}`, null);
+    const target = threadId ? "Thread hiện tại" : "Bản nháp thread mới";
+    showToast(`${target} - chế độ dịch vụ: ${normalizedMode === "inherit" ? "Kế thừa" : normalizedMode}`, null);
   }
 
   function toggleCodexServiceTierFromBadge() {
     if (codexPlusBackendStatus.status !== "ok") {
-      showToast("后端未连接，无法切换服务模式", null);
+      showToast("Backend chưa kết nối, không thể chuyển chế độ dịch vụ", null);
       refreshCodexServiceTierControls();
       return;
     }
@@ -1435,8 +1443,74 @@
     scan();
   }
 
+  function accountModeLabel(account) {
+    const mode = String(account?.relayMode || "");
+    if (mode === "pureApi") return "Pure API";
+    if (mode === "mixedApi") return "API tron";
+    return "Dang nhap";
+  }
+
+  function renderAccountSwitcher() {
+    const list = document.querySelector("[data-codex-account-list]");
+    if (!list) return;
+    if (codexPlusAccounts.status === "loading") {
+      list.innerHTML = `<div class="codex-plus-row-description">Dang doc tai khoan da luu...</div>`;
+      return;
+    }
+    if (codexPlusAccounts.status === "failed") {
+      list.innerHTML = `<div class="codex-plus-row-description">${escapeHtml(codexPlusAccounts.message || "Khong doc duoc tai khoan da luu.")}</div>`;
+      return;
+    }
+    const accounts = Array.isArray(codexPlusAccounts.accounts) ? codexPlusAccounts.accounts : [];
+    if (!accounts.length) {
+      list.innerHTML = `<div class="codex-plus-row-description">Chua co tai khoan da luu trong Manager.</div>`;
+      return;
+    }
+    list.innerHTML = accounts.map((account) => {
+      const active = !!account.active || account.id === codexPlusAccounts.activeProfileId;
+      const complete = !!account.hasConfig && !!account.hasAuth;
+      const status = active ? "Dang dung" : complete ? accountModeLabel(account) : "Thieu file";
+      return `
+        <button type="button" class="codex-plus-account-button" data-codex-account-id="${escapeHtml(account.id || "")}" data-active="${String(active)}" ${active || !complete ? "disabled" : ""}>
+          <span class="codex-plus-account-name">${escapeHtml(account.name || account.id || "Tai khoan")}</span>
+          <span class="codex-plus-account-status">${escapeHtml(status)}</span>
+        </button>
+      `;
+    }).join("");
+  }
+
+  async function loadSavedAccounts() {
+    codexPlusAccounts = { ...codexPlusAccounts, status: "loading" };
+    renderAccountSwitcher();
+    const result = await postJson("/accounts/list", {});
+    codexPlusAccounts = result?.status === "ok"
+      ? result
+      : { status: "failed", message: result?.message || "Khong doc duoc tai khoan da luu.", accounts: [] };
+    renderAccountSwitcher();
+  }
+
+  async function switchSavedAccount(profileId) {
+    if (!profileId) return;
+    const button = document.querySelector(`[data-codex-account-id="${CSS.escape(profileId)}"]`);
+    if (button) {
+      button.disabled = true;
+      button.querySelector(".codex-plus-account-status").textContent = "Dang chuyen...";
+    }
+    const result = await postJson("/accounts/switch", { profileId });
+    if (result?.status === "ok") {
+      codexPlusAccounts = { ...result, status: "ok" };
+      codexPlusBackendSettings = { ...codexPlusBackendSettings, ...(result.settings || {}) };
+      renderAccountSwitcher();
+      refreshCodexPlusBackendToggles();
+      showToast(result.message || "Da chuyen tai khoan. Khoi dong lai Codex neu phien hien tai chua doi ngay.", null);
+      return;
+    }
+    await loadSavedAccounts();
+    showToast(result?.message || "Chuyen tai khoan that bai", null);
+  }
+
   let codexPlusUserScripts = { enabled: true, builtin_dir: "", user_dir: "", scripts: [] };
-  let codexPlusBackendStatus = { status: "checking", message: "正在检查后端…" };
+  let codexPlusBackendStatus = { status: "checking", message: "Đang kiểm tra backend…" };
   let codexPlusBackendCheckSeq = 0;
 
   function renderBackendStatus() {
@@ -1453,11 +1527,11 @@
     const label = document.querySelector("[data-codex-backend-status]");
     if (label) {
       label.dataset.status = status;
-      label.textContent = codexPlusBackendStatus.message || (status === "ok" ? "后端已连接" : "未连接");
+      label.textContent = codexPlusBackendStatus.message || (status === "ok" ? "Backend đã kết nối" : "Chưa kết nối");
     }
     document.querySelectorAll("[data-codex-backend-indicator]").forEach((indicator) => {
       indicator.dataset.status = status;
-      indicator.title = status === "ok" ? "后端已连接" : status === "checking" ? "正在检查后端" : "未连接";
+      indicator.title = status === "ok" ? "Backend đã kết nối" : status === "checking" ? "Đang kiểm tra backend" : "Chưa kết nối";
     });
     const repair = document.querySelector("[data-codex-backend-repair]");
     if (repair) repair.hidden = status === "ok" || status === "checking";
@@ -1467,7 +1541,7 @@
   function withBackendTimeout(request) {
     return Promise.race([
       request,
-      new Promise((resolve) => setTimeout(() => resolve({ status: "failed", message: "后端检查超时", timeout: true }), 2000)),
+      new Promise((resolve) => setTimeout(() => resolve({ status: "failed", message: "Kiểm tra backend quá thời gian", timeout: true }), 2000)),
     ]);
   }
 
@@ -1487,12 +1561,12 @@
   }
 
   async function repairBackend() {
-    codexPlusBackendStatus = { status: "checking", message: "正在修复后端…" };
+    codexPlusBackendStatus = { status: "checking", message: "Đang sửa backend…" };
     renderBackendStatus();
     try {
       codexPlusBackendStatus = await postJson("/backend/repair", {});
     } catch (error) {
-      codexPlusBackendStatus = { status: "failed", message: "后端修复失败" };
+      codexPlusBackendStatus = { status: "failed", message: "Sửa backend thất bại" };
     }
     renderBackendStatus();
   }
@@ -1500,7 +1574,7 @@
   async function openManagerFromCodex() {
     const result = await postJson("/manager/open", {});
     if (result.status === "ok") {
-      showToast("管理工具已打开", null);
+      showToast("Đã mở công cụ quản lý", null);
     } else {
       showToast(result.message || "打开管理工具失败", null);
     }
@@ -1524,7 +1598,7 @@
     const list = document.querySelector("[data-codex-user-script-list]");
     if (!list) return;
     if (!codexPlusUserScripts.scripts?.length) {
-      list.textContent = "未发现用户脚本。";
+      list.textContent = "Không tìm thấy script người dùng.";
       return;
     }
     list.innerHTML = codexPlusUserScripts.scripts.map((script) => `
@@ -1590,8 +1664,8 @@
   }
 
   function renderCodexPlusAds() {
-    if (!codexPlusAdsLoaded) return `<div class="codex-plus-ad-empty">推荐内容加载中…</div>`;
-    if (!codexPlusAds.length) return `<div class="codex-plus-ad-empty">暂无推荐内容。</div>`;
+    if (!codexPlusAdsLoaded) return `<div class="codex-plus-ad-empty">Đang tải nội dung gợi ý…</div>`;
+    if (!codexPlusAds.length) return `<div class="codex-plus-ad-empty">Chưa có nội dung gợi ý.</div>`;
     return `
       <section class="codex-plus-ad-section">
         <h3 class="codex-plus-ad-section-title">赞助商推荐</h3>
@@ -1671,83 +1745,88 @@
           <button type="button" class="codex-plus-modal-close" aria-label="关闭">×</button>
         </div>
         <div class="codex-plus-tabs" role="tablist" aria-label="Codex++">
-          <button type="button" class="codex-plus-tab-button" data-codex-plus-tab="home" data-active="true">主页</button>
-          <button type="button" class="codex-plus-tab-button" data-codex-plus-tab="userScripts" data-active="false">用户脚本</button>
-          <button type="button" class="codex-plus-tab-button" data-codex-plus-tab="sponsor" data-active="false">推荐内容</button>
-          <button type="button" class="codex-plus-tab-button" data-codex-plus-tab="support" data-active="false">请作者喝咖啡</button>
+          <button type="button" class="codex-plus-tab-button" data-codex-plus-tab="home" data-active="true">Trang chủ</button>
+          <button type="button" class="codex-plus-tab-button" data-codex-plus-tab="userScripts" data-active="false">Script người dùng</button>
+          <button type="button" class="codex-plus-tab-button" data-codex-plus-tab="sponsor" data-active="false">Nội dung gợi ý</button>
         </div>
         <div class="codex-plus-modal-body">
           <div class="codex-plus-panel" data-codex-plus-panel="home">
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">后端连接</div><div class="codex-plus-row-description">每 5 秒检查一次 launcher 后端状态；断开时可尝试修复后端运行。</div></div>
+              <div><div class="codex-plus-row-title">Kết nối backend</div><div class="codex-plus-row-description">Kiểm tra trạng thái backend của launcher mỗi 5 giây; khi mất kết nối có thể thử sửa backend.</div></div>
               <div class="codex-plus-backend-status">
-                <div class="codex-plus-backend-label" data-codex-backend-status="true" data-status="checking">正在检查后端…</div>
-                <button type="button" class="codex-plus-backend-repair" data-codex-backend-repair="true" hidden>修复后端运行</button>
+                <div class="codex-plus-backend-label" data-codex-backend-status="true" data-status="checking">Đang kiểm tra backend…</div>
+                <button type="button" class="codex-plus-backend-repair" data-codex-backend-repair="true" hidden>Sửa backend</button>
               </div>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">页面功能增强</div><div class="codex-plus-row-description">关闭后停用删除、导出、移动、Timeline、插件相关和菜单位置增强。</div></div>
+              <div><div class="codex-plus-row-title">Chuyen tai khoan</div><div class="codex-plus-row-description">Chuyen nhanh giua cac tai khoan da luu trong Manager. Tai khoan hien tai se duoc snapshot truoc khi chuyen.</div></div>
+              <div class="codex-plus-account-list" data-codex-account-list="true">
+                <div class="codex-plus-row-description">Dang doc tai khoan da luu...</div>
+              </div>
+            </div>
+            <div class="codex-plus-row">
+              <div><div class="codex-plus-row-title">Tăng cường giao diện</div><div class="codex-plus-row-description">Khi tắt sẽ vô hiệu xóa, xuất, di chuyển, Timeline, phần plugin và các tinh chỉnh vị trí menu.</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-backend-setting="enhancementsEnabled"><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">插件选项解锁</div><div class="codex-plus-row-description">${codexPlusBackendSettings.launchMode === "relay" ? "兼容增强模式下无需开启；ChatGPT 登录态会保留官方插件入口。" : "完整增强模式会显示并启用插件入口。"}</div></div>
+              <div><div class="codex-plus-row-title">Mở khóa tùy chọn plugin</div><div class="codex-plus-row-description">${codexPlusBackendSettings.launchMode === "relay" ? "Không cần bật ở chế độ tương thích; trạng thái đăng nhập ChatGPT sẽ giữ cổng plugin chính thức." : "Chế độ tăng cường đầy đủ sẽ hiển thị và bật cổng plugin."}</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="pluginEntryUnlock" ${codexPlusBackendSettings.launchMode === "relay" ? 'disabled data-relay-unneeded="true"' : ""}><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">特殊插件强制安装</div><div class="codex-plus-row-description">${codexPlusBackendSettings.launchMode === "relay" ? "兼容增强模式下无需开启；不会改插件安装入口。" : "解除 App unavailable / 应用不可用导致的前端安装禁用。"}</div></div>
+              <div><div class="codex-plus-row-title">Bắt buộc cài plugin đặc biệt</div><div class="codex-plus-row-description">${codexPlusBackendSettings.launchMode === "relay" ? "Không cần bật ở chế độ tương thích; sẽ không can thiệp điểm cài plugin." : "Gỡ trạng thái khóa cài đặt ở frontend do App unavailable / Ứng dụng không khả dụng."}</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="forcePluginInstall" ${codexPlusBackendSettings.launchMode === "relay" ? 'disabled data-relay-unneeded="true"' : ""}><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">模型白名单解锁</div><div class="codex-plus-row-description">从环境变量和 Codex config.toml 中的中转站 /v1/models 拉取模型，并补进模型选择列表。</div></div>
+              <div><div class="codex-plus-row-title">Mở khóa danh sách model</div><div class="codex-plus-row-description">Lấy model từ biến môi trường và /v1/models của relay trong Codex config.toml, rồi bổ sung vào danh sách chọn model.</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="modelWhitelistUnlock"><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">Fast 按钮</div><div class="codex-plus-row-description">显示服务模式切换按钮，并允许把请求切到 Fast / priority；默认关闭以避免误触高价服务模式。</div></div>
+              <div><div class="codex-plus-row-title">Nút Fast</div><div class="codex-plus-row-description">Hiển thị nút chuyển chế độ dịch vụ và cho phép chuyển request sang Fast / priority; mặc định tắt để tránh chạm nhầm chế độ giá cao.</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="serviceTierControls"><span></span></button>
             </div>
             <div class="codex-plus-row" data-codex-service-tier-controls="true">
-              <div><div class="codex-plus-row-title">服务模式</div><div class="codex-plus-row-description">继承使用 config.toml 的 service tier；全局模式覆盖全部 thread；自定义允许按 thread 覆盖。</div></div>
+              <div><div class="codex-plus-row-title">Chế độ dịch vụ</div><div class="codex-plus-row-description">Kế thừa service tier từ config.toml; chế độ toàn cục áp dụng cho mọi thread; tùy chỉnh cho phép ghi đè theo thread.</div></div>
               <div class="codex-plus-service-tier-control">
-                <div class="codex-plus-service-tier-status" data-codex-service-tier-status="true" data-status="loading">正在读取…</div>
+                <div class="codex-plus-service-tier-status" data-codex-service-tier-status="true" data-status="loading">Đang đọc…</div>
                 <div class="codex-plus-service-tier-actions">
-                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-inherit="true">继承</button>
-                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-standard="true">全局 Standard</button>
-                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-fast="true">全局 Fast</button>
-                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-custom="true">自定义</button>
+                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-inherit="true">Kế thừa</button>
+                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-standard="true">Standard toàn cục</button>
+                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-fast="true">Fast toàn cục</button>
+                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-custom="true">Tùy chỉnh</button>
                 </div>
                 <div class="codex-plus-service-tier-actions codex-plus-service-tier-thread-actions">
-                  <span class="codex-plus-service-tier-thread-label">当前 thread 覆盖</span>
-                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-thread-inherit="true" title="当前 thread 不单独覆盖，继承 config.toml">继承</button>
-                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-thread-standard="true" title="仅当前 thread 使用 Standard，并切到自定义模式">Standard</button>
-                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-thread-fast="true" title="仅当前 thread 使用 Fast，并切到自定义模式">Fast</button>
+                  <span class="codex-plus-service-tier-thread-label">Ghi đè thread hiện tại</span>
+                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-thread-inherit="true" title="Thread hiện tại không ghi đè riêng, kế thừa config.toml">Kế thừa</button>
+                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-thread-standard="true" title="Chỉ thread hiện tại dùng Standard và chuyển sang chế độ tùy chỉnh">Standard</button>
+                  <button type="button" class="codex-plus-service-tier-button" data-codex-service-tier-thread-fast="true" title="Chỉ thread hiện tại dùng Fast và chuyển sang chế độ tùy chỉnh">Fast</button>
                 </div>
               </div>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">会话删除</div><div class="codex-plus-row-description">在会话列表悬停显示删除按钮，并支持撤销。</div></div>
+              <div><div class="codex-plus-row-title">Xóa hội thoại</div><div class="codex-plus-row-description">Hiện nút xóa khi rê chuột trên danh sách hội thoại và hỗ trợ hoàn tác.</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="sessionDelete"><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">Markdown 导出</div><div class="codex-plus-row-description">在会话列表显示导出按钮，按本地 rollout 导出带时间戳的 Markdown。</div></div>
+              <div><div class="codex-plus-row-title">Xuất Markdown</div><div class="codex-plus-row-description">Hiện nút xuất trong danh sách hội thoại và xuất Markdown có dấu thời gian từ rollout cục bộ.</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="markdownExport"><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">会话项目移动</div><div class="codex-plus-row-description">在会话列表悬停显示移动按钮，可移动到普通对话或其他本地项目。</div></div>
+              <div><div class="codex-plus-row-title">Di chuyển dự án hội thoại</div><div class="codex-plus-row-description">Hiện nút di chuyển khi rê chuột trên danh sách hội thoại; có thể chuyển sang hội thoại thường hoặc dự án cục bộ khác.</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="projectMove"><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">对话 Timeline</div><div class="codex-plus-row-description">在对话右侧显示用户提问时间线，悬停查看摘要，点击跳转。</div></div>
+              <div><div class="codex-plus-row-title">Timeline hội thoại</div><div class="codex-plus-row-description">Hiển thị dòng thời gian câu hỏi ở bên phải hội thoại; rê chuột để xem tóm tắt, bấm để nhảy đến vị trí.</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="conversationTimeline"><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">对话居中宽度</div><div class="codex-plus-row-description">开启后把主对话和输入框限制到固定最大宽度，适合大屏阅读。</div></div>
+              <div><div class="codex-plus-row-title">Độ rộng hội thoại căn giữa</div><div class="codex-plus-row-description">Khi bật, phần hội thoại chính và ô nhập sẽ bị giới hạn ở độ rộng tối đa cố định, phù hợp màn hình lớn.</div></div>
               <div class="codex-plus-width-control">
                 <input class="codex-plus-width-input" data-codex-plus-conversation-view-width="true" min="${conversationViewMinWidth}" max="${conversationViewMaxAllowedWidth}" step="10" type="number" value="${conversationViewWidth()}">
                 <button type="button" class="codex-plus-toggle" data-codex-plus-setting="conversationView"><span></span></button>
               </div>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">切换对话保留位置</div><div class="codex-plus-row-description">开启后在不同 thread 之间切换时恢复到上一次浏览位置，不再自动跳到底部。</div></div>
+              <div><div class="codex-plus-row-title">Giữ vị trí khi đổi hội thoại</div><div class="codex-plus-row-description">Khi bật, lúc chuyển giữa các thread sẽ quay lại vị trí xem trước đó thay vì tự nhảy xuống cuối.</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="threadScrollRestore"><span></span></button>
             </div>
             <div class="codex-plus-row">
@@ -1762,65 +1841,52 @@
               </div>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">历史会话修复</div><div class="codex-plus-row-description">切换官方登录、混合 API 或纯 API 后，让旧对话重新显示在当前模式下。</div></div>
+              <div><div class="codex-plus-row-title">Khôi phục hội thoại cũ</div><div class="codex-plus-row-description">Sau khi chuyển giữa đăng nhập chính thức, API trộn hoặc pure API, đưa các hội thoại cũ hiện lại trong chế độ hiện tại.</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-backend-setting="providerSyncEnabled"><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">页面增强模式</div><div class="codex-plus-row-description">${codexPlusBackendSettings.launchMode === "relay" ? "兼容增强：保留会话删除、导出、项目移动、Timeline 和用户脚本，仅关闭插件入口相关增强。" : "完整增强：加载插件入口、强制安装、项目路径移动等全部页面能力。"}</div></div>
-              <button type="button" class="codex-plus-action-button" data-codex-open-manager="true">打开管理工具</button>
+              <div><div class="codex-plus-row-title">Chế độ tăng cường giao diện</div><div class="codex-plus-row-description">${codexPlusBackendSettings.launchMode === "relay" ? "Tăng cường tương thích: giữ xóa hội thoại, xuất, di chuyển dự án, Timeline và script người dùng; chỉ tắt các tăng cường liên quan đến cổng plugin." : "Tăng cường đầy đủ: nạp cổng plugin, ép cài đặt, di chuyển đường dẫn dự án và toàn bộ khả năng giao diện."}</div></div>
+              <button type="button" class="codex-plus-action-button" data-codex-open-manager="true">Mở công cụ quản lý</button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">原生菜单栏位置</div><div class="codex-plus-row-description">把 Codex++ 菜单插入顶部原生菜单栏；默认关闭以避免页面重渲染冲突。</div></div>
+              <div><div class="codex-plus-row-title">Vị trí menu gốc</div><div class="codex-plus-row-description">Chèn menu Codex++ vào thanh menu gốc phía trên; mặc định tắt để tránh xung đột khi trang render lại.</div></div>
               <button type="button" class="codex-plus-toggle" data-codex-plus-setting="nativeMenuPlacement"><span></span></button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">打开 DevTools</div><div class="codex-plus-row-description">打开当前 Codex 页面开发者工具，方便查看用户脚本报错。</div></div>
-              <button type="button" class="codex-plus-action-button" data-codex-open-devtools="true">打开 DevTools</button>
+              <div><div class="codex-plus-row-title">Mở DevTools</div><div class="codex-plus-row-description">Mở công cụ phát triển của trang Codex hiện tại để dễ xem lỗi script người dùng.</div></div>
+              <button type="button" class="codex-plus-action-button" data-codex-open-devtools="true">Mở DevTools</button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">关于 Codex++</div><div class="codex-plus-about">Codex++ 是通过外部 launcher 注入的增强菜单，不修改 Codex App 原始安装文件。<br>Build: <span data-codex-plus-build="true">${codexPlusBuild}</span><br>GitHub: <a href="https://github.com/BigPizzaV3/CodexPlusPlus" target="_blank" rel="noreferrer">https://github.com/BigPizzaV3/CodexPlusPlus</a><br>Discord: <a href="https://discord.gg/y96kX7A76v" target="_blank" rel="noreferrer">https://discord.gg/y96kX7A76v</a></div></div>
+              <div><div class="codex-plus-row-title">Về Codex++</div><div class="codex-plus-about">Codex++ là menu tăng cường được inject qua launcher bên ngoài, không sửa file cài đặt gốc của Codex App.<br>Build: <span data-codex-plus-build="true">${codexPlusBuild}</span><br>GitHub: <a href="https://github.com/BigPizzaV3/CodexPlusPlus" target="_blank" rel="noreferrer">https://github.com/BigPizzaV3/CodexPlusPlus</a><br>Discord: <a href="https://discord.gg/y96kX7A76v" target="_blank" rel="noreferrer">https://discord.gg/y96kX7A76v</a></div></div>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">Discord 社区</div><div class="codex-plus-row-description">加入 Discord 获取更新消息、反馈问题或交流使用体验。</div></div>
-              <button type="button" class="codex-plus-action-button" data-codex-plus-discord="true">打开 Discord</button>
+              <div><div class="codex-plus-row-title">Cộng đồng Discord</div><div class="codex-plus-row-description">Tham gia Discord để nhận cập nhật, phản hồi lỗi hoặc trao đổi trải nghiệm sử dụng.</div></div>
+              <button type="button" class="codex-plus-action-button" data-codex-plus-discord="true">Mở Discord</button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">提出问题</div><div class="codex-plus-row-description">打开 GitHub Issues 反馈问题或建议。</div></div>
-              <button type="button" class="codex-plus-issue-button" data-codex-plus-issue="true">提出问题</button>
+              <div><div class="codex-plus-row-title">Báo vấn đề</div><div class="codex-plus-row-description">Mở GitHub Issues để gửi lỗi hoặc góp ý.</div></div>
+              <button type="button" class="codex-plus-issue-button" data-codex-plus-issue="true">Báo vấn đề</button>
             </div>
           </div>
           <div class="codex-plus-panel" data-codex-plus-panel="userScripts" hidden>
             <div class="codex-plus-row" data-codex-user-scripts-section="true">
               <div>
-                <div class="codex-plus-row-title">用户脚本</div>
-                <div class="codex-plus-row-description">启用用户脚本：自动加载内置目录和用户配置目录中的 .js 文件。</div>
-                <div class="codex-plus-user-script-warning">禁用后需重载页面或重启 Codex++ 才能完全移除已执行效果。</div>
-                <div class="codex-plus-user-script-dirs" data-codex-user-script-dirs="true">正在读取脚本目录…</div>
-                <div class="codex-plus-user-script-list" data-codex-user-script-list="true">正在读取用户脚本…</div>
+                <div class="codex-plus-row-title">Script người dùng</div>
+                <div class="codex-plus-row-description">Bật script người dùng: tự động nạp file .js trong thư mục tích hợp và thư mục cấu hình người dùng.</div>
+                <div class="codex-plus-user-script-warning">Sau khi tắt, cần tải lại trang hoặc khởi động lại Codex++ để gỡ hoàn toàn các hiệu ứng đã chạy.</div>
+                <div class="codex-plus-user-script-dirs" data-codex-user-script-dirs="true">Đang đọc thư mục script…</div>
+                <div class="codex-plus-user-script-list" data-codex-user-script-list="true">Đang đọc script người dùng…</div>
               </div>
               <div class="codex-plus-user-script-actions">
                 <button type="button" class="codex-plus-toggle" data-codex-user-scripts-enabled="true"><span></span></button>
-                <button type="button" class="codex-plus-user-script-reload" data-codex-user-scripts-reload="true">重新加载用户脚本</button>
+                <button type="button" class="codex-plus-user-script-reload" data-codex-user-scripts-reload="true">Tải lại script người dùng</button>
               </div>
             </div>
           </div>
           <div class="codex-plus-panel" data-codex-plus-panel="sponsor" hidden>
-            <div class="codex-plus-sponsor-text">推荐内容分为赞助商推荐和普通推荐。赞助商推荐来自支持 Codex++ 继续维护的合作方；普通推荐用于展示适合 Codex 用户的服务与信息。</div>
+            <div class="codex-plus-sponsor-text">Nội dung gợi ý được chia thành gợi ý tài trợ và gợi ý thông thường. Gợi ý tài trợ đến từ các bên hỗ trợ Codex++ tiếp tục được duy trì; gợi ý thông thường dùng để hiển thị dịch vụ và thông tin phù hợp cho người dùng Codex.</div>
             <div class="codex-plus-ad-remote">
               ${renderCodexPlusAds()}
-            </div>
-          </div>
-          <div class="codex-plus-panel" data-codex-plus-panel="support" hidden>
-            <div class="codex-plus-sponsor-text">如果 Codex++ 帮到了你，可以请我喝杯咖啡，或者随手赞赏支持一下继续维护。</div>
-            <div class="codex-plus-sponsor-grid">
-              <div class="codex-plus-sponsor-card">
-                <div class="codex-plus-sponsor-card-title">支付宝</div>
-                <img class="codex-plus-sponsor-qr" src="${window.__CODEX_PLUS_SPONSOR_IMAGES__?.alipay || `${helperBase}/assets/sponsor-alipay.jpg`}" alt="支付宝赞赏码">
-              </div>
-              <div class="codex-plus-sponsor-card">
-                <div class="codex-plus-sponsor-card-title">微信</div>
-                <img class="codex-plus-sponsor-qr" src="${window.__CODEX_PLUS_SPONSOR_IMAGES__?.wechat || `${helperBase}/assets/sponsor-wechat.jpg`}" alt="微信赞赏码">
-              </div>
             </div>
           </div>
         </div>
@@ -1921,6 +1987,13 @@
         loadUserScripts("/user-scripts/reload", {});
         return;
       }
+      const accountButton = target?.closest("[data-codex-account-id]");
+      if (accountButton) {
+        if (!accountButton.disabled && accountButton.dataset.active !== "true") {
+          switchSavedAccount(accountButton.getAttribute("data-codex-account-id"));
+        }
+        return;
+      }
       if (target?.closest("[data-codex-upstream-worktree-open]")) {
         if (!codexPlusSettings().upstreamWorktreeCreate) {
           showToast("Upstream worktree enhancement is disabled", null);
@@ -1950,6 +2023,7 @@
     refreshCodexPlusBackendToggles();
     renderBackendStatus();
     loadBackendSettings();
+    loadSavedAccounts();
     void loadCodexServiceTierState();
     loadUserScripts();
   }

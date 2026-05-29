@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use crate::models::{DeleteResult, DeleteStatus, ExportResult, ExportStatus, SessionRef};
-use crate::settings::{BackendSettings, SettingsStore};
+use crate::settings::{BackendSettings, LaunchMode, RelayMode, SettingsStore};
 use crate::status::StatusStore;
 use crate::user_scripts::UserScriptManager;
 
@@ -49,6 +49,8 @@ impl BridgeContext {
 pub trait BridgeSettingsService: Send + Sync {
     async fn get_settings(&self) -> anyhow::Result<BackendSettings>;
     async fn set_settings(&self, payload: Value) -> anyhow::Result<BackendSettings>;
+    async fn saved_accounts(&self) -> anyhow::Result<Value>;
+    async fn switch_saved_account(&self, profile_id: String) -> anyhow::Result<Value>;
 }
 
 #[async_trait]
@@ -111,6 +113,15 @@ pub async fn handle_bridge_request(
     let result = match path {
         "/settings/get" => settings_value(ctx.settings.get_settings().await),
         "/settings/set" => settings_value(ctx.settings.set_settings(payload.clone()).await),
+        "/accounts/list" => ctx.settings.saved_accounts().await,
+        "/accounts/switch" => {
+            let profile_id = payload
+                .get("profileId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            ctx.settings.switch_saved_account(profile_id).await
+        }
         "/user-scripts/list" => ctx.runtime.user_script_inventory().await,
         "/user-scripts/set-enabled" => {
             let enabled = payload
@@ -248,6 +259,121 @@ impl BridgeSettingsService for CoreSettingsService {
     async fn set_settings(&self, payload: Value) -> anyhow::Result<BackendSettings> {
         self.store.update(payload)
     }
+
+    async fn saved_accounts(&self) -> anyhow::Result<Value> {
+        Ok(saved_accounts_value(&self.store.load()?))
+    }
+
+    async fn switch_saved_account(&self, profile_id: String) -> anyhow::Result<Value> {
+        switch_saved_account_with_store(&self.store, &profile_id)
+    }
+}
+
+fn saved_accounts_value(settings: &BackendSettings) -> Value {
+    let active_id = settings.active_relay_id.clone();
+    json!({
+        "status": "ok",
+        "activeProfileId": active_id,
+        "accounts": settings.relay_profiles.iter().map(|profile| json!({
+            "id": profile.id,
+            "name": profile.name,
+            "relayMode": profile.relay_mode,
+            "protocol": profile.protocol,
+            "active": profile.id == settings.active_relay_id,
+            "hasConfig": !profile.config_contents.trim().is_empty(),
+            "hasAuth": !profile.auth_contents.trim().is_empty(),
+        })).collect::<Vec<_>>()
+    })
+}
+
+fn switch_saved_account_with_store(store: &SettingsStore, profile_id: &str) -> anyhow::Result<Value> {
+    let profile_id = profile_id.trim();
+    if profile_id.is_empty() {
+        anyhow::bail!("Thieu tai khoan can chuyen");
+    }
+
+    let home = crate::relay_config::default_codex_home_dir();
+    let mut settings = store.load()?;
+    let current_id = settings.active_relay_id.clone();
+    let current_index = settings
+        .relay_profiles
+        .iter()
+        .position(|profile| profile.id == current_id);
+
+    let target_index = settings
+        .relay_profiles
+        .iter()
+        .position(|profile| profile.id == profile_id)
+        .ok_or_else(|| anyhow::anyhow!("Khong tim thay tai khoan da luu: {profile_id}"))?;
+
+    if let Some(index) = current_index.filter(|index| settings.relay_profiles[*index].id != profile_id) {
+        let mut common_config = relay_combined_common_config(&settings);
+        crate::relay_config::backfill_relay_profile_from_home_with_common(
+            &home,
+            &mut settings.relay_profiles[index],
+            &mut common_config,
+        )
+        .map_err(|error| anyhow::anyhow!("Doc tai khoan hien tai that bai: {error}"))?;
+        settings.relay_common_config_contents = common_config;
+        settings.relay_context_config_contents.clear();
+    }
+
+    let target = settings.relay_profiles[target_index].clone();
+    validate_saved_account_for_switch(&target)?;
+
+    settings.active_relay_id = target.id.clone();
+    settings.launch_mode = if target.relay_mode == RelayMode::PureApi {
+        LaunchMode::Patch
+    } else {
+        LaunchMode::Relay
+    };
+    store.save(&settings)?;
+
+    let common_config = relay_combined_common_config(&settings);
+    let result =
+        crate::relay_config::apply_relay_profile_to_home_with_switch_rules(&home, &target, &common_config)
+            .map_err(|error| anyhow::anyhow!("Chuyen tai khoan that bai: {error}"))?;
+
+    if target.relay_mode == RelayMode::PureApi && !result.configured {
+        anyhow::bail!(
+            "Pure API chua san sang sau khi ghi config.toml / auth.json. Hay kiem tra lai tai khoan da luu."
+        );
+    }
+
+    Ok(json!({
+        "status": "ok",
+        "message": "Da chuyen tai khoan. Khoi dong lai Codex neu phien hien tai chua doi ngay.",
+        "activeProfileId": target.id,
+        "activeProfileName": target.name,
+        "backupPath": result.backup_path,
+        "settings": settings,
+        "accounts": saved_accounts_value(&settings)["accounts"].clone()
+    }))
+}
+
+fn validate_saved_account_for_switch(profile: &crate::settings::RelayProfile) -> anyhow::Result<()> {
+    if profile.config_contents.trim().is_empty() {
+        anyhow::bail!(
+            "Tai khoan \"{}\" dang thieu config.toml rieng. Hay luu tai khoan trong Manager truoc khi chuyen.",
+            profile.name
+        );
+    }
+    if profile.auth_contents.trim().is_empty() {
+        anyhow::bail!(
+            "Tai khoan \"{}\" dang thieu auth.json rieng. Hay dang nhap va luu tai khoan trong Manager truoc khi chuyen.",
+            profile.name
+        );
+    }
+    Ok(())
+}
+
+fn relay_combined_common_config(settings: &BackendSettings) -> String {
+    [settings.relay_common_config_contents.as_str(), settings.relay_context_config_contents.as_str()]
+        .into_iter()
+        .map(str::trim)
+        .filter(|section| !section.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 #[derive(Clone)]

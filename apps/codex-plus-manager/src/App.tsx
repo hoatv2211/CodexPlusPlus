@@ -55,6 +55,7 @@ import { Badge as UiBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { setCurrentLanguage, translate, translateLiteral, type Language } from "@/lib/i18n";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -92,6 +93,7 @@ type OverviewResult = CommandResult<{
 }>;
 
 type BackendSettings = {
+  language: Language;
   codexAppPath: string;
   codexExtraArgs: string[];
   providerSyncEnabled: boolean;
@@ -359,19 +361,20 @@ type Route = "overview" | "relay" | "context" | "enhance" | "userScripts" | "pro
 type Theme = "dark" | "light";
 
 const routes: Array<{ id: Route; label: string; icon: LucideIcon }> = [
-  { id: "overview", label: "概览", icon: LayoutDashboard },
-  { id: "relay", label: "供应商配置", icon: KeyRound },
-  { id: "context", label: "工具与插件", icon: Network },
-  { id: "enhance", label: "页面增强", icon: Hammer },
-  { id: "userScripts", label: "脚本市场", icon: FileCode2 },
-  { id: "providerSync", label: "历史会话修复", icon: Link2 },
-  { id: "recommendations", label: "推荐内容", icon: ExternalLink },
-  { id: "maintenance", label: "安装维护", icon: Wrench },
-  { id: "about", label: "关于", icon: Info },
-  { id: "settings", label: "设置", icon: Settings },
+  { id: "overview", label: "Overview", icon: LayoutDashboard },
+  { id: "relay", label: "Provider Config", icon: KeyRound },
+  { id: "context", label: "Tools and Plugins", icon: Network },
+  { id: "enhance", label: "Enhancements", icon: Hammer },
+  { id: "userScripts", label: "Script Market", icon: FileCode2 },
+  { id: "providerSync", label: "Session Repair", icon: Link2 },
+  { id: "recommendations", label: "Recommendations", icon: ExternalLink },
+  { id: "maintenance", label: "Install and Repair", icon: Wrench },
+  { id: "about", label: "About", icon: Info },
+  { id: "settings", label: "Settings", icon: Settings },
 ];
 
 const defaultSettings: BackendSettings = {
+  language: "vi",
   codexAppPath: "",
   codexExtraArgs: [],
   providerSyncEnabled: false,
@@ -383,7 +386,7 @@ const defaultSettings: BackendSettings = {
   relayProfiles: [
     {
       id: "default",
-      name: "默认中转",
+      name: "Trung chuyen mac dinh",
       model: "",
       baseUrl: "",
       upstreamBaseUrl: "",
@@ -412,6 +415,32 @@ const defaultSettings: BackendSettings = {
   cliWrapperApiKeyEnv: "CUSTOM_OPENAI_API_KEY",
 };
 
+let activeLanguage: Language = "vi";
+
+function localizeText(text: string) {
+  return translateLiteral(activeLanguage, text);
+}
+
+function localizeBuiltInProfileName(name: string) {
+  const trimmed = name.trim();
+  if (!trimmed) return name;
+  if (trimmed === "默认中转") {
+    return activeLanguage === "vi" ? "Trung chuyen mac dinh" : "Default Relay";
+  }
+  if (trimmed === "官方") {
+    return activeLanguage === "vi" ? "Chinh thuc" : "Official";
+  }
+  const supplierMatch = trimmed.match(/^供应商\s+(\d+)$/);
+  if (supplierMatch) {
+    return activeLanguage === "vi" ? `Nha cung cap ${supplierMatch[1]}` : `Provider ${supplierMatch[1]}`;
+  }
+  const relayMatch = trimmed.match(/^中转\s+([A-Za-z0-9_-]+)$/);
+  if (relayMatch) {
+    return activeLanguage === "vi" ? `Trung chuyen ${relayMatch[1]}` : `Relay ${relayMatch[1]}`;
+  }
+  return name;
+}
+
 export function App() {
   const [theme, setTheme] = useState<Theme>(() => loadInitialTheme());
   const [route, setRoute] = useState<Route>(() => loadInitialRoute());
@@ -435,6 +464,10 @@ export function App() {
   });
   const [settingsForm, setSettingsForm] = useState<BackendSettings>({ ...defaultSettings });
   const [removeOwnedData, setRemoveOwnedData] = useState(false);
+  const currentLanguage: Language = settingsForm.language || settings?.settings.language || "vi";
+  const t = (key: string, params?: Record<string, string | number>) => translate(currentLanguage, key, params);
+  activeLanguage = currentLanguage;
+  setCurrentLanguage(currentLanguage);
 
   const call = <T,>(command: string, args?: Record<string, unknown>) => invoke<T>(command, args);
 
@@ -455,7 +488,7 @@ export function App() {
     const result = await run(() => call<OverviewResult>("load_overview"));
     if (result) {
       setOverview(result);
-      if (!silent) showResultNotice("概览已检查", result, { silentSuccess: true });
+      if (!silent) showResultNotice("Overview Checked", result, { silentSuccess: true });
     }
   };
 
@@ -468,7 +501,7 @@ export function App() {
         ...current,
         appPath: current.appPath || result.settings.codexAppPath || "",
       }));
-      if (!silent) showResultNotice("设置已加载", result, { silentSuccess: true });
+      if (!silent) showResultNotice("Settings Loaded", result, { silentSuccess: true });
     }
   };
 
@@ -622,7 +655,7 @@ export function App() {
   const restart = async () => {
     const result = await launchCommand("restart_codex_plus");
     if (result) {
-      showNotice("重启 Codex++", result.message, result.status);
+      showNotice("Restart Codex++", result.message, result.status);
       await refreshOverview(true);
     }
   };
@@ -718,7 +751,7 @@ export function App() {
     if (result) {
       setSettings(result);
       setSettingsForm(normalizeSettings(result.settings));
-      showNotice("设置保存", result.message, result.status);
+      showNotice("Settings Saved", result.message, result.status);
     }
   };
 
@@ -728,7 +761,7 @@ export function App() {
     if (result) {
       setSettings(result);
       setSettingsForm(normalizeSettings(result.settings));
-      if (!silent || !isSuccessStatus(result.status)) showNotice("设置保存", result.message, result.status);
+      if (!silent || !isSuccessStatus(result.status)) showNotice("Settings Saved", result.message, result.status);
     }
   };
 
@@ -747,7 +780,7 @@ export function App() {
     if (result) {
       setSettings(result);
       setSettingsForm(normalizeSettings(result.settings));
-      showNotice("设置重置", result.message, result.status);
+      showNotice("Settings Reset", result.message, result.status);
     }
   };
 
@@ -772,7 +805,7 @@ export function App() {
       setSettings(settingsResult);
       setSettingsForm(normalizeSettings(settingsResult.settings));
       if (!isSuccessStatus(settingsResult.status)) {
-        showNotice("设置保存", settingsResult.message, settingsResult.status);
+        showNotice("Settings Saved", settingsResult.message, settingsResult.status);
         return false;
       }
     } else {
@@ -805,7 +838,7 @@ export function App() {
       setSettings(settingsResult);
       setSettingsForm(normalizeSettings(settingsResult.settings));
       if (!isSuccessStatus(settingsResult.status)) {
-        showNotice("设置保存", settingsResult.message, settingsResult.status);
+        showNotice("Settings Saved", settingsResult.message, settingsResult.status);
         return false;
       }
     } else {
@@ -902,14 +935,18 @@ export function App() {
     const switched = await clearRelayInjection(true);
     if (!switched) return;
     const result = await saveLaunchMode("relay", true);
-    if (result) showNotice("官方登录模式", "已切回官方登录；页面增强已设为兼容增强。", result.status);
+    if (result) showNotice("官方登录模式", activeLanguage === "vi"
+      ? "Da quay ve official login; giao dien dang o che do tang cuong tuong thich."
+      : "Switched back to official login. The UI is now in compatible enhancements mode.", result.status);
   };
 
   const switchPureApiMode = async () => {
     const switched = await applyPureApiInjection(true);
     if (!switched) return;
     const result = await saveLaunchMode("patch", true);
-    if (result) showNotice("纯 API 模式", "已切换到纯 API；页面增强已设为完整增强。", result.status);
+    if (result) showNotice("纯 API 模式", activeLanguage === "vi"
+      ? "Da chuyen sang pure API; giao dien dang o che do tang cuong day du."
+      : "Switched to pure API. The UI is now in full enhancements mode.", result.status);
   };
 
   const switchRelayProfile = async (next: BackendSettings) => {
@@ -937,7 +974,7 @@ export function App() {
         targetRelayName: selectedBeforeSave.name,
         error: validationError,
       });
-      showNotice("供应商配置可能不正确", validationError, "failed");
+      showNotice(activeLanguage === "vi" ? "Cau hinh nha cung cap co the chua dung" : "Provider configuration may be invalid", validationError, "failed");
       return;
     }
 
@@ -1042,7 +1079,9 @@ export function App() {
         status: result?.status,
         message: result?.message,
       });
-      showNotice("供应商切换", result?.message ?? "读取当前配置文件失败，已停止切换以避免覆盖用户改动。", result?.status ?? "failed");
+      showNotice("供应商切换", result?.message ?? (activeLanguage === "vi"
+        ? "Doc tep cau hinh hien tai that bai. Da dung viec chuyen de tranh ghi de thay doi cua ban."
+        : "Failed to read the current config files. Switching was stopped to avoid overwriting your changes."), result?.status ?? "failed");
       return null;
     }
 
@@ -1070,7 +1109,7 @@ export function App() {
   };
 
   const showNotice = (title: string, message: string, status?: Status) => {
-    setNotice({ title, message, status });
+    setNotice({ title: localizeText(title), message: localizeText(message), status });
   };
 
   const showResultNotice = (
@@ -1242,7 +1281,7 @@ export function App() {
                 </button>
               ) : null}
             </div>
-            <div className="brand-subtitle">管理控制台</div>
+            <div className="brand-subtitle">{t("app.subtitle")}</div>
           </div>
         </div>
         <nav className="nav">
@@ -1253,13 +1292,13 @@ export function App() {
               className={`nav-item ${route === item.id ? "active" : ""}`}
               key={item.id}
               onClick={() => void navigate(item.id)}
-              title={item.label}
+              title={routeTitle(item.id, t)}
               type="button"
             >
               <span className="nav-icon">
                 <Icon className="h-4 w-4" aria-hidden="true" />
               </span>
-              <span className="nav-label">{item.label}</span>
+              <span className="nav-label">{routeTitle(item.id, t)}</span>
             </button>
           );
           })}
@@ -1268,23 +1307,23 @@ export function App() {
       <main className="workspace">
         <header className="topbar">
           <div>
-            <h1>{routeTitle(route)}</h1>
-            <p>{routeSubtitle(route)}</p>
+            <h1>{routeTitle(route, t)}</h1>
+            <p>{routeSubtitle(route, t)}</p>
           </div>
           <div className="topbar-actions">
             <Button
               onClick={actions.toggleTheme}
               size="icon"
-              title={theme === "dark" ? "切换到浅色" : "切换到深色"}
+              title={theme === "dark" ? t("theme.switchToLight") : t("theme.switchToDark")}
               variant="outline"
             >
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
-            <Button onClick={() => void actions.restart()} title="重启 Codex++" variant="outline">
+            <Button onClick={() => void actions.restart()} title={t("actions.restart")} variant="outline">
               <Rocket className="h-4 w-4" />
-              重启 Codex++
+              {t("actions.restart")}
             </Button>
-            <Button onClick={() => void actions.refreshCurrent()} size="icon" title="刷新当前页面" variant="outline">
+            <Button onClick={() => void actions.refreshCurrent()} size="icon" title={t("actions.refreshCurrent")} variant="outline">
               <RefreshCw className="h-4 w-4" />
             </Button>
           </div>
@@ -1337,7 +1376,7 @@ export function App() {
           ) : null}
           {route === "about" ? <AboutScreen overview={overview} update={update} logs={logs} diagnostics={diagnostics} actions={actions} /> : null}
           {route === "settings" ? (
-            <SettingsScreen settings={settings} theme={theme} form={settingsForm} onFormChange={setSettingsForm} actions={actions} />
+            <SettingsScreen settings={settings} theme={theme} form={settingsForm} onFormChange={setSettingsForm} actions={actions} t={t} />
           ) : null}
         </section>
       </main>
@@ -1424,7 +1463,7 @@ function OverviewScreen({
   return (
     <>
       <Panel>
-        <CardHead title="健康检查" detail="概览只展示关键问题，具体配置在对应页面处理" />
+        <CardHead title="Health Check" detail="Overview only highlights key issues. Use the related pages for detailed configuration." />
         <CardContent>
           <div className="health-grid">
             <div className={`health-item ${overview?.codex_version ? "ok" : "needs-fix"}`}>
@@ -1541,17 +1580,17 @@ function RelayScreen({
   return (
     <>
       <Panel>
-        <CardHead title="供应商列表" detail={`${normalized.relayProfiles.length} 个供应商配置；可拖动排序，点编辑进入详情`} />
+        <CardHead title={activeLanguage === "vi" ? "Danh sach nha cung cap" : "Provider List"} detail={activeLanguage === "vi" ? `${normalized.relayProfiles.length} cau hinh; co the keo sap xep va bam sua de xem chi tiet` : `${normalized.relayProfiles.length} provider configs; drag to reorder and click edit for details`} />
         <CardContent>
           <div className="relay-import-row">
             <div>
-              <strong>供应商配置导入</strong>
+              <strong>{localizeText("供应商配置导入")}</strong>
               <span>{ccsProviderSummary(ccsProviders)}</span>
             </div>
             <Toolbar>
               <Button onClick={() => void actions.refreshCcsProviders()} size="sm" variant="ghost">
                 <RefreshCw className="h-4 w-4" />
-                刷新
+                {localizeText("刷新")}
               </Button>
               <Button
                 disabled={!ccsProviders?.providers.length}
@@ -1560,7 +1599,7 @@ function RelayScreen({
                 variant="secondary"
               >
                 <Download className="h-4 w-4" />
-                导入供应商配置
+                {localizeText("导入供应商配置")}
               </Button>
             </Toolbar>
           </div>
@@ -1573,7 +1612,7 @@ function RelayScreen({
               }}
             >
               <Plus className="h-4 w-4" />
-              添加供应商
+              {localizeText("添加供应商")}
             </Button>
           </div>
           <RelayProfileList
@@ -1632,7 +1671,7 @@ function EnhanceScreen({
             <FeatureItem title="特殊插件强制安装" detail="仅完整增强模式启用。" enabled={form.enhancementsEnabled && form.launchMode === "patch"} />
           </div>
           <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>保存增强设置</Button>
+            <Button onClick={() => void actions.saveSettings()}>Save Enhancement Settings</Button>
           </Toolbar>
         </CardContent>
       </Panel>
@@ -1727,11 +1766,11 @@ function ProviderSyncScreen({
           </label>
           <div className="relay-grid compact">
             <Metric label="自动修复" value={form.providerSyncEnabled ? "启动前执行" : "关闭"} />
-            <Metric label="设置文件" value={settings?.settings_path ?? "未加载"} />
+            <Metric label="Settings File" value={settings?.settings_path ?? "Not Loaded"} />
             <Metric label="页面增强" value={form.launchMode === "relay" ? "兼容模式" : "完整模式"} />
           </div>
           <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>保存自动修复设置</Button>
+            <Button onClick={() => void actions.saveSettings()}>Save Auto-Repair Settings</Button>
             <Button onClick={() => void actions.syncProvidersNow()} variant="outline">
               <RefreshCw className="h-4 w-4" />
               立刻修复历史会话
@@ -1821,7 +1860,7 @@ function MaintenanceScreen({
           <div className="status-table">
             <StatusRow title="Codex 应用" status={overview?.codex_app.status} path={overview?.codex_app.path} />
             <StatusRow title="静默启动入口" status={overview?.silent_shortcut.status} path={overview?.silent_shortcut.path} />
-            <StatusRow title="管理控制台入口" status={overview?.management_shortcut.status} path={overview?.management_shortcut.path} />
+            <StatusRow title="Manager Entry" status={overview?.management_shortcut.status} path={overview?.management_shortcut.path} />
             <StatusRow title="Watcher 自动接管" status={watcher?.enabled ? "ok" : "disabled"} path={watcher?.disabled_flag} />
           </div>
           <Toolbar>
@@ -1980,30 +2019,48 @@ function SettingsScreen({
   form,
   onFormChange,
   actions,
+  t,
 }: {
   settings: SettingsResult | null;
   theme: Theme;
   form: BackendSettings;
   onFormChange: (value: BackendSettings) => void;
   actions: Actions;
+  t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   return (
     <>
       <Panel>
-        <CardHead title="基础设置" detail={settings?.settings_path ?? ""} />
+        <CardHead title={t("settings.title")} detail={settings?.settings_path ?? ""} />
         <CardContent>
+          <Field label={t("settings.language")}>
+            <div className="button-row">
+              <Button
+                variant={form.language === "vi" ? "default" : "secondary"}
+                onClick={() => onFormChange({ ...form, language: "vi" })}
+              >
+                Tiếng Việt
+              </Button>
+              <Button
+                variant={form.language === "en" ? "default" : "secondary"}
+                onClick={() => onFormChange({ ...form, language: "en" })}
+              >
+                English
+              </Button>
+            </div>
+          </Field>
           <div className="theme-row">
             <div>
-              <strong>界面主题</strong>
-              <span>当前为{theme === "dark" ? "深色" : "浅色"}模式。</span>
+              <strong>{t("settings.theme")}</strong>
+              <span>{t("settings.themeCurrent", { mode: t(theme === "dark" ? "theme.dark" : "theme.light") })}</span>
             </div>
-            <Button variant="secondary" onClick={actions.toggleTheme}>切换主题</Button>
+            <Button variant="secondary" onClick={actions.toggleTheme}>{t("settings.toggleTheme")}</Button>
           </div>
-          <Field label="供应商测试模型">
+          <Field label={t("settings.relayTestModel")}>
             <Input
               value={form.relayTestModel}
               onChange={(event) => onFormChange({ ...form, relayTestModel: event.currentTarget.value })}
-              placeholder="例如 gpt-5.4-mini"
+              placeholder={t("settings.relayTestModelPlaceholder")}
             />
           </Field>
           <label className="check-row">
@@ -2012,23 +2069,23 @@ function SettingsScreen({
               onChange={(event) => onFormChange({ ...form, cliWrapperEnabled: event.currentTarget.checked })}
               type="checkbox"
             />
-            <span>启用 Codex 命令包装器</span>
+            <span>{t("settings.cliWrapperEnabled")}</span>
           </label>
           <div className="form-row">
-            <Field label="包装器 Base URL">
+            <Field label={t("settings.cliWrapperBaseUrl")}>
               <Input
                 value={form.cliWrapperBaseUrl}
                 onChange={(event) => onFormChange({ ...form, cliWrapperBaseUrl: event.currentTarget.value })}
               />
             </Field>
-            <Field label="API Key 环境变量">
+            <Field label={t("settings.cliWrapperApiKeyEnv")}>
               <Input
                 value={form.cliWrapperApiKeyEnv}
                 onChange={(event) => onFormChange({ ...form, cliWrapperApiKeyEnv: event.currentTarget.value })}
               />
             </Field>
           </div>
-          <Field label="API Key">
+          <Field label={t("settings.apiKey")}>
             <Input
               type="password"
               value={form.cliWrapperApiKey}
@@ -2036,17 +2093,17 @@ function SettingsScreen({
             />
           </Field>
           <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>保存设置</Button>
+            <Button onClick={() => void actions.saveSettings()}>{t("settings.save")}</Button>
             <Button variant="secondary" onClick={() => void actions.resetSettings()}>
-              重置设置
+              {t("settings.reset")}
             </Button>
           </Toolbar>
         </CardContent>
       </Panel>
       <Panel>
-        <CardHead title="Codex 启动参数" detail="启动 Codex App 时追加到默认 CDP 参数后。留空则保持默认启动行为。" />
+        <CardHead title={t("settings.launchArgsTitle")} detail={t("settings.launchArgsDetail")} />
         <CardContent>
-          <Field label="额外参数">
+          <Field label={t("settings.extraArgs")}>
             <Textarea
               className="launch-args-input"
               placeholder="--force_high_performance_gpu"
@@ -2060,9 +2117,9 @@ function SettingsScreen({
               }
             />
           </Field>
-          <p className="field-hint">每行一个参数，例如 --force_high_performance_gpu。不需要填写 open 或 --args。</p>
+          <p className="field-hint">{t("settings.extraArgsHint")}</p>
           <Toolbar>
-            <Button onClick={() => void actions.saveSettings()}>保存设置</Button>
+            <Button onClick={() => void actions.saveSettings()}>{t("settings.save")}</Button>
           </Toolbar>
         </CardContent>
       </Panel>
@@ -2102,7 +2159,7 @@ function LogsPanel({ logs, actions }: { logs: LogsResult | null; actions: Action
 function DiagnosticsPanel({ diagnostics, actions }: { diagnostics: DiagnosticsResult | null; actions: Actions }) {
   return (
     <Panel>
-      <CardHead title="诊断报告" detail="包含版本、路径、设置和平台信息" />
+      <CardHead title="Diagnostics" detail="Includes version, paths, settings, and platform information" />
       <CardContent>
         <Textarea className="log-view tall" readOnly value={diagnostics?.report ?? "尚未生成诊断报告。"} />
         <Toolbar>
@@ -2206,11 +2263,11 @@ function SortableRelayProfileCard({
       >
         <GripVertical className="h-4 w-4" />
       </button>
-      <span className="relay-index" title={profile.name || "未命名供应商"}>
+      <span className="relay-index" title={localizeText(profile.name || "未命名供应商")}>
         {providerInitial(profile.name)}
       </span>
       <span className="relay-summary">
-        <strong>{profile.name || "未命名供应商"}</strong>
+        <strong>{localizeText(profile.name || "未命名供应商")}</strong>
         <small>{relayModeLabel(profile.relayMode)} · {relayProtocolLabel(profile.protocol)} · {relayProfileConfigBrief(profile)}</small>
       </span>
       <span className="relay-card-actions">
@@ -2222,11 +2279,11 @@ function SortableRelayProfileCard({
             void actions.switchRelayProfile(next);
           }}
           size="sm"
-          title={active ? "当前正在使用" : "设为当前"}
+          title={localizeText(active ? "当前正在使用" : "设为当前")}
           variant={active ? "secondary" : "outline"}
         >
           <CheckCircle2 className="h-4 w-4" />
-          {active ? "使用中" : "使用"}
+          {localizeText(active ? "使用中" : "使用")}
         </Button>
         <span className="relay-card-extra">
           <Button
@@ -2235,7 +2292,7 @@ function SortableRelayProfileCard({
               void actions.testRelayProfile(profile);
             }}
             size="icon"
-            title="发送 hi 测试"
+            title={localizeText("发送 hi 测试")}
             variant="ghost"
           >
             <TestTube className="h-4 w-4" />
@@ -2246,7 +2303,7 @@ function SortableRelayProfileCard({
               onEdit(profile.id);
             }}
             size="icon"
-            title="编辑"
+            title={localizeText("编辑")}
             variant="ghost"
           >
             <Edit3 className="h-4 w-4" />
@@ -2257,7 +2314,7 @@ function SortableRelayProfileCard({
               onFormChange(duplicateRelayProfile(form, profile.id));
             }}
             size="icon"
-            title="复制"
+            title={localizeText("复制")}
             variant="ghost"
           >
             <Copy className="h-4 w-4" />
@@ -2269,7 +2326,7 @@ function SortableRelayProfileCard({
               onFormChange(removeRelayProfile(form, profile.id));
             }}
             size="icon"
-            title="删除供应商"
+            title={localizeText("删除供应商")}
             variant="ghost"
           >
             <Trash2 className="h-4 w-4" />
@@ -2281,17 +2338,21 @@ function SortableRelayProfileCard({
 }
 
 function MarketScriptCard({ script, actions }: { script: ScriptMarketItem; actions: Actions }) {
-  const status = script.updateAvailable ? "可更新" : script.installed ? `已安装 ${script.installedVersion}` : "未安装";
+  const status = script.updateAvailable
+    ? localizeText("可更新")
+    : script.installed
+      ? `${localizeText("已安装")} ${script.installedVersion}`
+      : localizeText("未安装");
   return (
     <div className="script-market-card">
       <div className="script-market-title">
         <div>
           <strong>{script.name}</strong>
-          <span>{script.author || "未知作者"}</span>
+          <span>{script.author || localizeText("未知作者")}</span>
         </div>
         <UiBadge variant={script.updateAvailable ? "default" : script.installed ? "secondary" : "outline"}>{status}</UiBadge>
       </div>
-      <p className="script-market-description">{script.description || "暂无描述。"}</p>
+      <p className="script-market-description">{script.description || localizeText("暂无描述。")}</p>
       <div className="script-market-tags">
         <span className="script-market-tag">v{script.version}</span>
         {script.tags.map((tag) => (
@@ -2301,12 +2362,12 @@ function MarketScriptCard({ script, actions }: { script: ScriptMarketItem; actio
       <div className="script-market-actions">
         <Button onClick={() => void actions.installMarketScript(script.id)} size="sm">
           <Download className="h-4 w-4" />
-          {script.updateAvailable ? "更新" : script.installed ? "重新安装" : "安装"}
+          {localizeText(script.updateAvailable ? "更新" : script.installed ? "重新安装" : "安装")}
         </Button>
         {script.homepage ? (
           <Button onClick={() => void actions.openExternalUrl(script.homepage)} size="sm" variant="secondary">
             <ExternalLink className="h-4 w-4" />
-            主页
+            {localizeText("主页")}
           </Button>
         ) : null}
       </div>
@@ -2349,7 +2410,16 @@ function RelayProfileDetail({
     );
   }, [profile.id, isActive, isNew, relayFiles?.configContents, relayFiles?.authContents]);
   const saveDraft = async () => {
-    const normalizedDraft = deriveRelayProfileFromFiles(draft);
+    const liveFiles = isActive ? await actions.refreshRelayFiles() : null;
+    const draftForSave =
+      isActive && liveFiles
+        ? deriveRelayProfileFromFiles({
+          ...draft,
+          configContents: liveFiles.configContents,
+          authContents: liveFiles.authContents,
+        })
+        : deriveRelayProfileFromFiles(draft);
+    const normalizedDraft = draftForSave;
     const next = isNew
       ? addRelayProfile(form, normalizedDraft)
       : updateRelayProfile(form, profile.id, normalizedDraft);
@@ -2380,11 +2450,11 @@ function RelayProfileDetail({
         <Toolbar>
           <Button onClick={onBack} variant="secondary">
             <ArrowLeft className="h-4 w-4" />
-            返回列表
+            {localizeText("返回列表")}
           </Button>
           <Button onClick={() => void saveDraft()}>
             <Save className="h-4 w-4" />
-            保存
+            {localizeText("保存")}
           </Button>
         </Toolbar>
       </div>
@@ -2456,26 +2526,26 @@ function RelayProfileEditor({
     <div className="relay-profile-editor">
       <div className="relay-editor-head">
         <div>
-          <strong>{profile.name || "未命名供应商"}</strong>
-          <span>{isNew ? "新建供应商需要先保存到列表" : profile.id === form.activeRelayId ? "当前正在使用" : "编辑后保存列表，再切换模式时会使用新配置"}</span>
+          <strong>{localizeText(profile.name || "未命名供应商")}</strong>
+          <span>{localizeText(isNew ? "新建供应商需要先保存到列表" : profile.id === form.activeRelayId ? "当前正在使用" : "编辑后保存列表，再切换模式时会使用新配置")}</span>
         </div>
         {isNew ? null : (
           <Button
             onClick={onSwitch}
             variant={profile.id === form.activeRelayId ? "secondary" : "default"}
           >
-            {profile.id === form.activeRelayId ? "使用中" : "设为当前"}
+            {localizeText(profile.id === form.activeRelayId ? "使用中" : "设为当前")}
           </Button>
         )}
       </div>
       <div className="relay-fields">
-        <Field className="relay-field-name" label="名称">
+        <Field className="relay-field-name" label={localizeText("名称")}>
           <Input
             value={profile.name}
             onChange={(event) => updateDraft({ name: event.currentTarget.value })}
           />
         </Field>
-        <Field className="relay-field-mode" label="接入模式">
+        <Field className="relay-field-mode" label={localizeText("接入模式")}>
           <select
             className="field-select"
             value={profile.relayMode}
@@ -2484,18 +2554,18 @@ function RelayProfileEditor({
               updateDraft(relayMode === "official" ? { relayMode, officialMixApiKey: false } : { relayMode });
             }}
           >
-            <option value="official">官方登录</option>
-            <option value="pureApi">纯 API</option>
+            <option value="official">{localizeText("官方登录")}</option>
+            <option value="pureApi">{localizeText("纯 API")}</option>
           </select>
         </Field>
-        <Field className="relay-field-config-model" label="配置模型">
+        <Field className="relay-field-config-model" label={localizeText("配置模型")}>
           <Input
             value={profile.model}
             onChange={(event) => updateDraft({ model: event.currentTarget.value })}
-            placeholder="写入 config.toml 的 model 字段，例如 gpt-5"
+            placeholder={localizeText("写入 config.toml 的 model 字段，例如 gpt-5")}
           />
         </Field>
-        <Field className="relay-field-goals" label="Codex 目标">
+        <Field className="relay-field-goals" label={localizeText("Codex 目标")}>
           <label className="inline-check">
             <input
               checked={configHasCodexGoalsFeature(profile.configContents)}
@@ -2506,7 +2576,7 @@ function RelayProfileEditor({
               }
               type="checkbox"
             />
-            <span>启用目标功能</span>
+            <span>{localizeText("启用目标功能")}</span>
           </label>
         </Field>
         <div className="relay-advanced-toggle">
@@ -2518,66 +2588,66 @@ function RelayProfileEditor({
             variant="secondary"
           >
             <Settings className="h-4 w-4" />
-            更多选项
+            {localizeText("更多选项")}
           </Button>
         </div>
         {showAdvanced ? (
           <>
-            <Field className="relay-field-test-model" label="测试模型">
+            <Field className="relay-field-test-model" label={localizeText("测试模型")}>
               <Input
                 value={profile.testModel}
                 onChange={(event) => updateDraft({ testModel: event.currentTarget.value })}
-                placeholder={`留空使用默认：${form.relayTestModel || defaultSettings.relayTestModel}`}
+                placeholder={`${localizeText("留空使用默认：")}${form.relayTestModel || defaultSettings.relayTestModel}`}
               />
             </Field>
-            <Field className="relay-field-context-window" label="上下文大小">
+            <Field className="relay-field-context-window" label={localizeText("上下文大小")}>
               <Input
                 inputMode="numeric"
                 value={profile.contextWindow}
                 onChange={(event) => updateDraft({ contextWindow: event.currentTarget.value.replace(/[^\d]/g, "") })}
-                placeholder="留空不改写，例如 200000"
+                placeholder={localizeText("留空不改写，例如 200000")}
               />
             </Field>
-            <Field className="relay-field-auto-compact" label="压缩上下文大小">
+            <Field className="relay-field-auto-compact" label={localizeText("压缩上下文大小")}>
               <Input
                 inputMode="numeric"
                 value={profile.autoCompactLimit}
                 onChange={(event) => updateDraft({ autoCompactLimit: event.currentTarget.value.replace(/[^\d]/g, "") })}
-                placeholder="留空不改写，例如 160000"
+                placeholder={localizeText("留空不改写，例如 160000")}
               />
             </Field>
           </>
         ) : null}
         {profile.relayMode === "official" ? (
-          <Field className="relay-field-official-key" label="API Key">
+          <Field className="relay-field-official-key" label={localizeText("API Key")}>
             <label className="inline-check">
               <input
                 checked={profile.officialMixApiKey}
                 onChange={(event) => updateDraft({ officialMixApiKey: event.currentTarget.checked })}
                 type="checkbox"
               />
-              <span>混入 API KEY</span>
+              <span>{localizeText("混入 API KEY")}</span>
             </label>
           </Field>
         ) : null}
         {showApiFields ? (
           <>
-            <Field className="relay-field-base-url" label="Base URL">
+            <Field className="relay-field-base-url" label={localizeText("Base URL")}>
               <Input
                 value={profile.baseUrl}
                 onChange={(event) => updateDraft({ baseUrl: event.currentTarget.value })}
-                placeholder="填写中转服务 Base URL"
+                placeholder={localizeText("填写中转服务 Base URL")}
               />
             </Field>
-            <Field className="relay-field-key" label="Key">
+            <Field className="relay-field-key" label={localizeText("Key")}>
               <Input
                 type="password"
                 value={profile.apiKey}
                 onChange={(event) => updateDraft({ apiKey: event.currentTarget.value })}
-                placeholder="输入中转服务的 API Key"
+                placeholder={localizeText("输入中转服务的 API Key")}
               />
             </Field>
-            <Field className="relay-field-protocol" label="上游协议">
+            <Field className="relay-field-protocol" label={localizeText("上游协议")}>
               <div className="protocol-options">
                 <button
                   className={`protocol-option ${profile.protocol === "responses" ? "active" : ""}`}
@@ -2598,12 +2668,12 @@ function RelayProfileEditor({
           </>
         ) : null}
         {showApiFields ? (
-          <Field className="relay-field-model-list" label="模型列表">
+          <Field className="relay-field-model-list" label={localizeText("模型列表")}>
             <div className="relay-model-list-tools">
               <Textarea
                 value={profile.modelList}
                 onChange={(event) => updateDraft({ modelList: event.currentTarget.value })}
-                placeholder="每行一个模型，例如 qwen3-coder"
+                placeholder={localizeText("每行一个模型，例如 qwen3-coder")}
               />
               <Button
                 onClick={async () => {
@@ -2615,7 +2685,7 @@ function RelayProfileEditor({
                 variant="secondary"
               >
                 <Download className="h-4 w-4" />
-                从上游获取
+                {localizeText("从上游获取")}
               </Button>
             </div>
           </Field>
@@ -2624,7 +2694,7 @@ function RelayProfileEditor({
       {showApiFields && profile.protocol === "chatCompletions" ? (
         <div className="hint-line relay-protocol-hint">
           <MessageCircle className="h-4 w-4" />
-          <span>此上游会通过本地 127.0.0.1:57321 转成 Responses API，需要从 Codex++ 启动 Codex。</span>
+          <span>{localizeText("此上游会通过本地 127.0.0.1:57321 转成 Responses API，需要从 Codex++ 启动 Codex。")}</span>
         </div>
       ) : null}
       <div className="hint-line relay-protocol-hint">
@@ -2682,13 +2752,13 @@ function RelayContextManager({
     <div className="relay-context-panel">
       <div className="relay-context-head">
         <div>
-          <strong>Codex 工具与插件</strong>
-          <span>MCP、Skills、Plugins 作为全局配置独立管理，切换任意供应商都会合并。</span>
+          <strong>{localizeText("Codex 工具与插件")}</strong>
+          <span>{localizeText("MCP、Skills、Plugins 作为全局配置独立管理，切换任意供应商都会合并。")}</span>
         </div>
         <div className="relay-context-head-actions">
           <Button onClick={() => setEditor({ kind: activeKind })} size="sm" variant="secondary">
             <Plus className="h-4 w-4" />
-            新增{label}
+            {localizeText("新增")}{localizeText(label)}
           </Button>
         </div>
       </div>
@@ -2706,7 +2776,9 @@ function RelayContextManager({
         ))}
       </div>
       <div className="relay-context-summary">
-        当前共有 {visibleEntries.length} 个{label}；这些条目独立于供应商保存，会写入所有供应商切换后的 config.toml。
+        {activeLanguage === "vi"
+          ? `Hien co ${visibleEntries.length} muc ${localizeText(label)}; cac muc nay duoc luu doc lap voi nha cung cap va se duoc ghi vao config.toml sau moi lan chuyen.`
+          : `There are currently ${visibleEntries.length} ${localizeText(label)} entries. They are stored independently from providers and are written into config.toml after every switch.`}
       </div>
       <div className="relay-context-list">
         {visibleEntries.length ? (
@@ -2720,21 +2792,21 @@ function RelayContextManager({
                   className={`context-enabled-switch ${entry.enabled ? "active" : ""}`}
                   onClick={() => void toggleContextEntryEnabled(entry)}
                   role="switch"
-                  title={entry.enabled ? "禁用此扩展项" : "启用此扩展项"}
+                  title={localizeText(entry.enabled ? "禁用此扩展项" : "启用此扩展项")}
                   type="button"
                 >
                   <span className="context-switch-track" aria-hidden="true">
                     <span className="context-switch-thumb" />
                   </span>
                 </button>
-                <Button onClick={() => setEditor({ kind: entry.kind, entry })} size="icon" title="编辑扩展项" variant="ghost">
+                <Button onClick={() => setEditor({ kind: entry.kind, entry })} size="icon" title={localizeText("编辑扩展项")} variant="ghost">
                   <Edit3 className="h-4 w-4" />
                 </Button>
                 <Button
                   className="relay-context-delete"
                   onClick={() => void deleteEntry(entry)}
                   size="icon"
-                  title="删除扩展项"
+                  title={localizeText("删除扩展项")}
                   variant="ghost"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -2743,7 +2815,9 @@ function RelayContextManager({
             </div>
           ))
         ) : (
-          <div className="empty">暂无{label}，可以从通用配置文件或这里新增。</div>
+          <div className="empty">{activeLanguage === "vi"
+            ? `Chua co ${localizeText(label)}, ban co the them tu tep cau hinh dung chung hoac tao ngay tai day.`
+            : `No ${localizeText(label)} entries yet. You can add them here or extract them from the shared config file.`}</div>
         )}
       </div>
       {editor ? (
@@ -2777,7 +2851,7 @@ function ContextEntryEditor({
   return (
     <div className="context-editor">
       <div className="context-editor-fields">
-        <Field label="类型">
+        <Field label={localizeText("类型")}>
           <select
             className="field-select"
             disabled={!!entry}
@@ -2794,25 +2868,25 @@ function ContextEntryEditor({
             disabled={!!entry}
             value={id}
             onChange={(event) => setId(event.currentTarget.value.trim())}
-            placeholder="例如 context7"
+            placeholder={localizeText("例如 context7")}
           />
         </Field>
       </div>
-      <Field label="TOML 配置体">
+      <Field label={localizeText("TOML 配置体")}>
         <Textarea
           className="context-editor-textarea"
           value={tomlBody}
           onChange={(event) => setTomlBody(event.currentTarget.value)}
-          placeholder={'只填写表头下面的内容，例如：\ncommand = "npx"\nargs = ["-y", "@upstash/context7-mcp"]'}
+          placeholder={localizeText('只填写表头下面的内容，例如：\ncommand = "npx"\nargs = ["-y", "@upstash/context7-mcp"]')}
           spellCheck={false}
         />
       </Field>
       <Toolbar>
         <Button disabled={!canSave} onClick={() => onSave(draftKind, id.trim(), tomlBody)} size="sm">
           <Save className="h-4 w-4" />
-          保存扩展项
+          {localizeText("保存扩展项")}
         </Button>
-        <Button onClick={onCancel} size="sm" variant="secondary">取消</Button>
+        <Button onClick={onCancel} size="sm" variant="secondary">{localizeText("取消")}</Button>
       </Toolbar>
     </div>
   );
@@ -2885,8 +2959,8 @@ function RelayFileEditors({
       <div className="relay-file-panel">
         <div className="relay-file-head">
           <div>
-            <strong>config.toml 预览</strong>
-            <span>{isActive ? "当前供应商切换后会写入的预览；上下文开关变化会立即反映" : "切换到此供应商时会写入的预览；上下文开关变化会立即反映"}</span>
+            <strong>{localizeText("config.toml 预览")}</strong>
+            <span>{localizeText(isActive ? "当前供应商切换后会写入的预览；上下文开关变化会立即反映" : "切换到此供应商时会写入的预览；上下文开关变化会立即反映")}</span>
           </div>
         </div>
         <SyncedTextarea
@@ -2908,8 +2982,8 @@ function RelayFileEditors({
       <div className="relay-file-panel">
         <div className="relay-file-head">
           <div>
-            <strong>通用配置文件</strong>
-            <span>只保留非 MCP、Skills、Plugins 的跨供应商配置；工具与插件在独立页面管理。</span>
+            <strong>{localizeText("通用配置文件")}</strong>
+            <span>{localizeText("只保留非 MCP、Skills、Plugins 的跨供应商配置；工具与插件在独立页面管理。")}</span>
           </div>
           <Button
             onClick={async () => {
@@ -2939,7 +3013,7 @@ function RelayFileEditors({
             variant="secondary"
           >
             <Download className="h-4 w-4" />
-            提取当前供应商配置
+            {localizeText("提取当前供应商配置")}
           </Button>
         </div>
         <SyncedTextarea
@@ -2952,7 +3026,7 @@ function RelayFileEditors({
         <div className="relay-file-head">
           <div>
             <strong>auth.json</strong>
-            <span>{isActive ? "当前使用中：打开时从 ~/.codex/auth.json 回填，保存时写回真实文件" : "切换到此供应商时完整写入 ~/.codex/auth.json"}</span>
+            <span>{localizeText(isActive ? "当前使用中：打开时从 ~/.codex/auth.json 回填，保存时写回真实文件" : "切换到此供应商时完整写入 ~/.codex/auth.json")}</span>
           </div>
         </div>
         <SyncedTextarea
@@ -2973,16 +3047,16 @@ function ModeSelector({ launchMode, actions }: { launchMode: LaunchMode; actions
         onClick={() => void actions.setLaunchMode("relay")}
         type="button"
       >
-        <strong>兼容增强</strong>
-        <span>适合官方登录或官方混入 API Key；保留会话删除、导出、项目移动、Timeline 和用户脚本，关闭插件入口相关增强。</span>
+        <strong>{localizeText("兼容增强")}</strong>
+        <span>{localizeText("适合官方登录或官方混入 API Key；保留会话删除、导出、项目移动、Timeline 和用户脚本，关闭插件入口相关增强。")}</span>
       </button>
       <button
         className={`mode-option ${launchMode === "patch" ? "active" : ""}`}
         onClick={() => void actions.setLaunchMode("patch")}
         type="button"
       >
-        <strong>完整增强</strong>
-        <span>适合纯 API；启用插件入口、强制安装、会话删除导出、项目移动等全部页面能力。</span>
+        <strong>{localizeText("完整增强")}</strong>
+        <span>{localizeText("适合纯 API；启用插件入口、强制安装、会话删除导出、项目移动等全部页面能力。")}</span>
       </button>
     </div>
   );
@@ -2992,8 +3066,8 @@ function FeatureItem({ title, detail, enabled }: { title: string; detail: string
   return (
     <div className="feature-item">
       <div>
-        <strong>{title}</strong>
-        <span>{detail}</span>
+        <strong>{localizeText(title)}</strong>
+        <span>{localizeText(detail)}</span>
       </div>
       <Badge status={enabled ? "ok" : "disabled"} />
     </div>
@@ -3006,7 +3080,7 @@ function GuideList({ items }: { items: string[] }) {
       {items.map((item, index) => (
         <div className="guide-step" key={item}>
           <span>{index + 1}</span>
-          <p>{item}</p>
+          <p>{localizeText(item)}</p>
         </div>
       ))}
     </div>
@@ -3033,8 +3107,8 @@ function NoticeDialog({
           {notice.status === "failed" ? <Bell className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
         </div>
         <div className="toast-body">
-          <h2>{notice.title}</h2>
-          <p>{notice.message}</p>
+          <h2>{localizeText(notice.title)}</h2>
+          <p>{localizeText(notice.message)}</p>
         </div>
         <button className="toast-close" onClick={onClose} type="button">×</button>
       </div>
@@ -3053,8 +3127,8 @@ function Panel({ children, fill = false, className = "" }: { children: React.Rea
 function CardHead({ title, detail }: { title: string; detail: string }) {
   return (
     <CardHeader className="panel-head">
-      <CardTitle>{title}</CardTitle>
-      <CardDescription>{detail}</CardDescription>
+      <CardTitle>{localizeText(title)}</CardTitle>
+      <CardDescription>{localizeText(detail)}</CardDescription>
     </CardHeader>
   );
 }
@@ -3066,7 +3140,7 @@ function Toolbar({ children }: { children: React.ReactNode }) {
 function Field({ label, children, className = "" }: { label: string; children: React.ReactNode; className?: string }) {
   return (
     <Label className={`field ${className}`}>
-      <span>{label}</span>
+      <span>{localizeText(label)}</span>
       {children}
     </Label>
   );
@@ -3075,9 +3149,9 @@ function Field({ label, children, className = "" }: { label: string; children: R
 function StatusRow({ title, status = "unknown", path }: { title: string; status?: string; path?: string | null }) {
   return (
     <div className="status-row">
-      <span>{title}</span>
+      <span>{localizeText(title)}</span>
       <Badge status={status} />
-      <code>{path || "未记录路径"}</code>
+      <code>{path || localizeText("未记录路径")}</code>
     </div>
   );
 }
@@ -3087,11 +3161,11 @@ function Badge({ status }: { status: string }) {
 }
 
 function LatestLaunch({ status }: { status: LaunchStatus | null }) {
-  if (!status) return <div className="empty">暂无启动状态。</div>;
+  if (!status) return <div className="empty">{localizeText("暂无启动状态。")}</div>;
   return (
     <div className="metric-list">
       <Metric label="状态" value={status.status} />
-      <Metric label="消息" value={status.message} />
+      <Metric label="消息" value={localizeText(status.message)} />
       <Metric label="Debug" value={String(status.debug_port ?? "-")} />
       <Metric label="Helper" value={String(status.helper_port ?? "-")} />
       <Metric label="时间" value={formatTime(status.started_at_ms)} />
@@ -3102,30 +3176,34 @@ function LatestLaunch({ status }: { status: LaunchStatus | null }) {
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <span>{label}</span>
-      <strong>{value}</strong>
+      <span>{localizeText(label)}</span>
+      <strong>{localizeText(value)}</strong>
     </div>
   );
 }
 
 function ScriptRow({ script, actions }: { script: NonNullable<UserScriptInventory["scripts"]>[number]; actions: Actions }) {
-  const source = script.market_id ? `市场 · ${script.version || "未知版本"}` : script.source === "builtin" ? "内置" : "用户";
+  const source = script.market_id
+    ? `${activeLanguage === "vi" ? "Kho" : "Market"} · ${script.version || localizeText("未知版本")}`
+    : script.source === "builtin"
+      ? localizeText("内置")
+      : localizeText("用户");
   const canDelete = script.source === "user";
   return (
     <div className="table-row">
       <span>{script.name}</span>
       <span>{source}</span>
-      <span>{script.enabled ? "启用" : "关闭"}</span>
-      <span>{script.status}</span>
+      <span>{localizeText(script.enabled ? "启用" : "关闭")}</span>
+      <span>{localizeText(script.status)}</span>
       <div className="script-row-actions">
         <Button onClick={() => void actions.setUserScriptEnabled(script.key, !script.enabled)} size="sm" variant="secondary">
           {script.enabled ? <PowerOff className="h-4 w-4" /> : <Power className="h-4 w-4" />}
-          {script.enabled ? "禁用" : "启用"}
+          {localizeText(script.enabled ? "禁用" : "启用")}
         </Button>
         {canDelete ? (
           <Button onClick={() => void actions.deleteUserScript(script.key)} size="sm" variant="outline">
             <Trash2 className="h-4 w-4" />
-            删除
+            {localizeText("删除")}
           </Button>
         ) : null}
       </div>
@@ -3134,7 +3212,7 @@ function ScriptRow({ script, actions }: { script: NonNullable<UserScriptInventor
 }
 
 function AdGrid({ ads, empty, actions }: { ads: AdItem[]; empty: string; actions: Actions }) {
-  if (!ads.length) return <div className="empty">{empty}</div>;
+  if (!ads.length) return <div className="empty">{localizeText(empty)}</div>;
   return (
     <div className="ad-grid">
       {ads.map((ad) => (
@@ -3151,7 +3229,7 @@ function AdGrid({ ads, empty, actions }: { ads: AdItem[]; empty: string; actions
             </div>
           ) : null}
           <span className="ad-link">
-            打开
+            {localizeText("打开")}
             <ExternalLink className="h-4 w-4" />
           </span>
         </button>
@@ -3166,34 +3244,46 @@ function isExpiredAd(ad: AdItem) {
   return Number.isFinite(expiresAt) && expiresAt < Date.now();
 }
 
-function routeTitle(route: Route) {
-  return routes.find((item) => item.id === route)?.label ?? "概览";
+function routeTitle(route: Route, t: (key: string, params?: Record<string, string | number>) => string) {
+  const titles: Record<Route, string> = {
+    overview: "nav.overview",
+    relay: "nav.relay",
+    context: "nav.context",
+    enhance: "nav.enhance",
+    userScripts: "nav.userScripts",
+    providerSync: "nav.providerSync",
+    recommendations: "nav.recommendations",
+    maintenance: "nav.maintenance",
+    about: "nav.about",
+    settings: "nav.settings",
+  };
+  return t(titles[route]);
 }
 
-function routeSubtitle(route: Route) {
+function routeSubtitle(route: Route, t: (key: string, params?: Record<string, string | number>) => string) {
   const subtitles: Record<Route, string> = {
-    overview: "检查问题、启动与快速修复",
-    relay: "管理 API 供应商、协议、Key 与配置文件",
-    context: "独立管理 MCP、Skills、Plugins",
-    enhance: "会话删除、导出、项目移动和脚本能力",
-    userScripts: "内置和用户自定义脚本清单",
-    providerSync: "切换模式后让旧对话重新可见",
-    recommendations: "赞助商推荐与普通推荐",
-    maintenance: "入口安装、修复、Watcher 与手动启动",
-    about: "版本信息、项目链接、GitHub Release 更新、日志与诊断",
-    settings: "主题、命令包装器和启动参数",
+    overview: "route.overview",
+    relay: "route.relay",
+    context: "route.context",
+    enhance: "route.enhance",
+    userScripts: "route.userScripts",
+    providerSync: "route.providerSync",
+    recommendations: "route.recommendations",
+    maintenance: "route.maintenance",
+    about: "route.about",
+    settings: "route.settings",
   };
-  return subtitles[route];
+  return t(subtitles[route]);
 }
 
 const contextKindOptions: Array<{ kind: ContextKind; label: string; tableName: string }> = [
   { kind: "mcp", label: "MCP", tableName: "mcp_servers" },
   { kind: "skill", label: "Skills", tableName: "skills" },
-  { kind: "plugin", label: "插件", tableName: "plugins" },
+  { kind: "plugin", label: "Plugins", tableName: "plugins" },
 ];
 
 function contextKindLabel(kind: ContextKind) {
-  return contextKindOptions.find((option) => option.kind === kind)?.label ?? "扩展项";
+  return contextKindOptions.find((option) => option.kind === kind)?.label ?? "Plugins";
 }
 
 function contextEntriesFromSettings(settings: BackendSettings): CodexContextEntries {
@@ -3722,32 +3812,53 @@ function contextSelectionForAllEntries(settings: BackendSettings): RelayContextS
 }
 
 function ccsProviderSummary(result: CcsProvidersResult | null) {
-  if (!result) return "尚未读取外部供应商数据库。";
-  if (!isSuccessStatus(result.status)) return result.message;
-  if (!result.providers.length) return `未发现 Codex 供应商配置：${result.dbPath}`;
-  return `发现 ${result.providers.length} 个 Codex 供应商配置：${result.dbPath}`;
+  if (!result) return activeLanguage === "vi" ? "Chua doc co so du lieu nha cung cap ben ngoai." : "External provider database has not been read yet.";
+  if (!isSuccessStatus(result.status)) return localizeText(result.message);
+  if (!result.providers.length) {
+    return activeLanguage === "vi"
+      ? `Khong tim thay cau hinh nha cung cap Codex: ${result.dbPath}`
+      : `No Codex provider config found: ${result.dbPath}`;
+  }
+  return activeLanguage === "vi"
+    ? `Da tim thay ${result.providers.length} cau hinh nha cung cap Codex: ${result.dbPath}`
+    : `Found ${result.providers.length} Codex provider configs: ${result.dbPath}`;
 }
 
 function providerInitial(name: string) {
-  const trimmed = (name || "供应商").trim();
-  return Array.from(trimmed)[0]?.toUpperCase() || "供";
+  const trimmed = (name || (activeLanguage === "vi" ? "Nha cung cap" : "Provider")).trim();
+  return Array.from(trimmed)[0]?.toUpperCase() || (activeLanguage === "vi" ? "N" : "P");
 }
 
 function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    found: "已找到",
-    missing: "缺失",
-    installed: "已安装",
-    ok: "正常",
-    running: "运行中",
-    failed: "失败",
-    accepted: "已受理",
-    not_checked: "未检查",
-    not_implemented: "未实现",
-    disabled: "已禁用",
-    unknown: "未知",
+  const labels: Record<Language, Record<string, string>> = {
+    vi: {
+      found: "Da tim thay",
+      missing: "Thieu",
+      installed: "Da cai dat",
+      ok: "Binh thuong",
+      running: "Dang chay",
+      failed: "That bai",
+      accepted: "Da tiep nhan",
+      not_checked: "Chua kiem tra",
+      not_implemented: "Chua ho tro",
+      disabled: "Da tat",
+      unknown: "Khong ro",
+    },
+    en: {
+      found: "Found",
+      missing: "Missing",
+      installed: "Installed",
+      ok: "OK",
+      running: "Running",
+      failed: "Failed",
+      accepted: "Accepted",
+      not_checked: "Not checked",
+      not_implemented: "Not implemented",
+      disabled: "Disabled",
+      unknown: "Unknown",
+    },
   };
-  return labels[status] ?? status;
+  return labels[activeLanguage][status] ?? status;
 }
 
 function statusClass(status: string) {
@@ -3801,7 +3912,7 @@ function normalizeSettings(settings: BackendSettings): BackendSettings {
       : [
           {
             id: settings.activeRelayId || "default",
-            name: "默认中转",
+            name: "Trung chuyen mac dinh",
             model: "",
             baseUrl: settings.relayBaseUrl || defaultSettings.relayBaseUrl,
             upstreamBaseUrl: settings.relayBaseUrl || defaultSettings.relayBaseUrl,
@@ -3845,6 +3956,7 @@ function normalizeRelayProfile(profile: RelayProfile, defaultContextSelection = 
   const legacyMixedApi = profile.relayMode === "mixedApi";
   let normalized: RelayProfile = {
     ...profile,
+    name: localizeBuiltInProfileName(profile.name || ""),
     model: profile.model || "",
     baseUrl: profile.baseUrl || defaultSettings.relayBaseUrl,
     upstreamBaseUrl: profile.upstreamBaseUrl || profile.baseUrl || "",
@@ -3879,7 +3991,10 @@ function activeRelayProfile(settings: BackendSettings): RelayProfile {
 }
 
 function relayProtocolLabel(protocol: RelayProtocol): string {
-  return protocol === "chatCompletions" ? "Chat Completions 转 Responses" : "Responses API";
+  if (protocol === "chatCompletions") {
+    return activeLanguage === "vi" ? "Chat Completions -> Responses" : "Chat Completions -> Responses";
+  }
+  return "Responses API";
 }
 
 function normalizeRelayMode(mode: RelayMode | undefined): RelayMode {
@@ -3906,45 +4021,75 @@ function normalizeContextSelection(
 }
 
 function relayModeLabel(mode: RelayMode): string {
-  if (mode === "pureApi") return "纯 API";
-  return "官方登录";
+  if (mode === "pureApi") return activeLanguage === "vi" ? "API thuan" : "Pure API";
+  return activeLanguage === "vi" ? "Dang nhap chinh thuc" : "Official Login";
 }
 
 function relayProfileConfigBrief(profile: RelayProfile): string {
-  if (profile.relayMode === "official") return profile.officialMixApiKey ? "混入 API Key" : "不写 API 文件";
-  return profile.baseUrl || "未填写 URL";
+  if (profile.relayMode === "official") {
+    return profile.officialMixApiKey
+      ? activeLanguage === "vi" ? "Tron API Key" : "Mix API Key"
+      : activeLanguage === "vi" ? "Khong ghi tep API" : "No API file writes";
+  }
+  return profile.baseUrl || (activeLanguage === "vi" ? "Chua nhap URL" : "URL not set");
 }
 
 function relayProfileModeHelp(profile: RelayProfile): string {
   if (profile.relayMode === "official") {
     if (profile.officialMixApiKey) {
-      return "此供应商会保留官方登录模式，并把请求混入当前 API Key；页面增强仍使用兼容模式。";
+      return activeLanguage === "vi"
+        ? "Nha cung cap nay giu dang nhap chinh thuc va tron them API Key hien tai; che do tang cuong van dung muc tuong thich."
+        : "This provider keeps official login, mixes in the current API key, and stays on compatible enhancements.";
     }
-    return "此供应商会切回官方登录模式，使用 ChatGPT 官方账号，不写入 API Key。";
+    return activeLanguage === "vi"
+      ? "Nha cung cap nay se quay ve dang nhap chinh thuc, dung tai khoan ChatGPT va khong ghi API Key."
+      : "This provider switches back to official login, uses a ChatGPT account, and does not write an API key.";
   }
   if (profile.relayMode === "pureApi") {
-    return "此供应商会完整写入 config.toml / auth.json，并启用完整页面增强。";
+    return activeLanguage === "vi"
+      ? "Nha cung cap nay se ghi day du config.toml / auth.json va bat tang cuong day du."
+      : "This provider writes full config.toml / auth.json files and enables full enhancements.";
   }
-  return "此供应商会保留官方登录模式，并把请求混入当前 API Key；页面增强仍使用兼容模式。";
+  return activeLanguage === "vi"
+    ? "Nha cung cap nay giu dang nhap chinh thuc va tron them API Key hien tai; che do tang cuong van dung muc tuong thich."
+    : "This provider keeps official login, mixes in the current API key, and stays on compatible enhancements.";
 }
 
 function relayProfileReadinessText(profile: RelayProfile, relay: RelayResult | null): string {
   if (profile.relayMode === "official") {
     if (profile.officialMixApiKey) {
       const hasApiFields = profile.baseUrl.trim() && profile.apiKey.trim();
-      if (!relay?.authenticated && !hasApiFields) return "当前未登录官方账号，也未配置混入 API 的 Base URL / Key。";
-      if (!relay?.authenticated) return "当前未登录官方账号；官方登录混入 API Key 需要先登录官方账号。";
-      if (!hasApiFields) return "当前还没有填写混入 API 的 Base URL / Key。";
-      return `官方登录已就绪：${relay.accountLabel || "已登录"}，会混入当前 API Key。`;
+      if (!relay?.authenticated && !hasApiFields) return activeLanguage === "vi"
+        ? "Hien chua dang nhap tai khoan chinh thuc va cung chua cau hinh Base URL / Key de tron API."
+        : "Official login is not active, and no Base URL / key has been configured for API mixing.";
+      if (!relay?.authenticated) return activeLanguage === "vi"
+        ? "Hien chua dang nhap tai khoan chinh thuc; che do official login + API key can dang nhap truoc."
+        : "Official login is not active. Official login with API key mixing requires signing in first.";
+      if (!hasApiFields) return activeLanguage === "vi"
+        ? "Van chua dien Base URL / Key de tron API."
+        : "The Base URL / key for API mixing is still missing.";
+      return activeLanguage === "vi"
+        ? `Dang nhap chinh thuc san sang: ${relay.accountLabel || "da dang nhap"}, se tron them API Key hien tai.`
+        : `Official login is ready: ${relay.accountLabel || "signed in"}. The current API key will be mixed in.`;
     }
     return relay?.authenticated
-      ? `官方账号已登录：${relay.accountLabel || relay.authSource || "已检测"}。`
-      : "当前未登录官方账号；切到官方登录模式后仍需要先在 Codex/ChatGPT 登录。";
+      ? activeLanguage === "vi"
+        ? `Tai khoan chinh thuc da dang nhap: ${relay.accountLabel || relay.authSource || "da nhan dien"}.`
+        : `Official account is signed in: ${relay.accountLabel || relay.authSource || "detected"}.`
+      : activeLanguage === "vi"
+        ? "Hien chua dang nhap tai khoan chinh thuc; sau khi chuyen ve official login van can dang nhap trong Codex/ChatGPT."
+        : "No official account is signed in. After switching to official login, you still need to sign in within Codex/ChatGPT.";
   }
   const hasFiles = profile.configContents.trim() && profile.authContents.trim();
-  if (!hasFiles) return "当前供应商还没有完整 config.toml / auth.json。";
-  if (relay && !relay.configured) return "纯 API 配置未完整写入：请检查此供应商的 auth.json 是否包含 OPENAI_API_KEY，且 config.toml 是否包含 model_provider / provider / base_url。";
-  return "纯 API 就绪：会直接写入此供应商的完整 config.toml / auth.json。";
+  if (!hasFiles) return activeLanguage === "vi"
+    ? "Nha cung cap nay chua co bo config.toml / auth.json day du."
+    : "This provider does not yet have a complete config.toml / auth.json pair.";
+  if (relay && !relay.configured) return activeLanguage === "vi"
+    ? "Cau hinh pure API chua du: kiem tra auth.json co OPENAI_API_KEY va config.toml co model_provider / provider / base_url."
+    : "The pure API configuration is incomplete. Check that auth.json includes OPENAI_API_KEY and config.toml includes model_provider / provider / base_url.";
+  return activeLanguage === "vi"
+    ? "Pure API san sang: se ghi truc tiep bo config.toml / auth.json day du cua nha cung cap nay."
+    : "Pure API is ready. The provider's full config.toml / auth.json files will be written directly.";
 }
 
 function relayProfileSwitchCommand(profile: RelayProfile): "clear_relay_injection" | "apply_relay_injection" | "apply_pure_api_injection" {
@@ -3955,9 +4100,15 @@ function relayProfileSwitchCommand(profile: RelayProfile): "clear_relay_injectio
 }
 
 function relayProfileModeSwitchedText(profile: RelayProfile): string {
-  if (profile.relayMode === "pureApi") return "已按此供应商切换到纯 API；页面增强已设为完整增强。";
-  if (profile.officialMixApiKey) return "已按此供应商使用官方登录，并混入 API Key；页面增强已设为兼容增强。";
-  return "已按此供应商切回官方登录；页面增强已设为兼容增强。";
+  if (profile.relayMode === "pureApi") return activeLanguage === "vi"
+    ? "Da chuyen sang pure API theo nha cung cap nay; giao dien dang o che do tang cuong day du."
+    : "Switched to pure API for this provider. The UI is now in full enhancements mode.";
+  if (profile.officialMixApiKey) return activeLanguage === "vi"
+    ? "Da ap dung official login va tron API Key theo nha cung cap nay; giao dien dang o che do tuong thich."
+    : "Official login with API key mixing is now active for this provider. The UI remains in compatible enhancements mode.";
+  return activeLanguage === "vi"
+    ? "Da quay ve official login theo nha cung cap nay; giao dien dang o che do tuong thich."
+    : "Switched back to official login for this provider. The UI remains in compatible enhancements mode.";
 }
 
 function withGeneratedRelayFiles(profile: RelayProfile): RelayProfile {
@@ -4232,11 +4383,17 @@ function setTomlSectionStringKey(contents: string, sectionName: string, key: str
 function relayProfileSwitchValidation(profile: RelayProfile): string | null {
   if (profile.relayMode === "official" && !profile.officialMixApiKey) return null;
   if (!profile.configContents.trim()) {
-    return `供应商「${profile.name || profile.id}」缺少独立 config.toml，已停止切换，避免继续显示上一套配置文件。请先在该供应商详情里保存 config.toml。`;
+    return activeLanguage === "vi"
+      ? `Nha cung cap "${profile.name || profile.id}" dang thieu config.toml rieng. Da dung chuyen de tranh tiep tuc hien bo cau hinh cu. Hay luu config.toml trong trang chi tiet cua nha cung cap nay truoc.`
+      : `Provider "${profile.name || profile.id}" is missing its own config.toml. Switching was stopped so the previous config does not remain visible. Save config.toml in this provider's detail screen first.`;
   }
   if (profile.relayMode !== "official" || !authJsonHasOpenAiApiKey(profile.authContents)) return null;
-  const mode = profile.officialMixApiKey ? "官方混合 API" : "官方登录";
-  return `${mode} 的 auth.json 检测到 OPENAI_API_KEY，这通常是纯 API 登录态。请检查此供应商的 auth.json，确认它是 ChatGPT 官方登录态后再切换。`;
+  const mode = activeLanguage === "vi"
+    ? (profile.officialMixApiKey ? "Official login + API key mix" : "Official login")
+    : (profile.officialMixApiKey ? "Official login + API key mix" : "Official login");
+  return activeLanguage === "vi"
+    ? `${mode}: auth.json dang chua OPENAI_API_KEY, thuong la dang nhap pure API. Hay kiem tra auth.json cua nha cung cap nay va xac nhan do la trang thai dang nhap ChatGPT chinh thuc truoc khi chuyen.`
+    : `${mode}: auth.json contains OPENAI_API_KEY, which usually means a pure API login state. Check this provider's auth.json and confirm it is a ChatGPT official login state before switching.`;
 }
 
 function authJsonHasOpenAiApiKey(contents: string): boolean {
@@ -4281,7 +4438,9 @@ function createRelayProfile(settings: BackendSettings): RelayProfile {
   const contextSelection = contextSelectionForAllEntries(settings);
   const next = {
     id,
-    name: `供应商 ${settings.relayProfiles.length + 1}`,
+    name: activeLanguage === "vi"
+      ? `Nha cung cap ${settings.relayProfiles.length + 1}`
+      : `Provider ${settings.relayProfiles.length + 1}`,
     model: "",
     baseUrl: defaultSettings.relayBaseUrl,
     upstreamBaseUrl: defaultSettings.relayBaseUrl,
@@ -4323,7 +4482,9 @@ function duplicateRelayProfile(settings: BackendSettings, id: string): BackendSe
   const next = {
     ...source,
     id: nextId,
-    name: `${source.name || "未命名供应商"} 副本`,
+    name: activeLanguage === "vi"
+      ? `${source.name || "Nha cung cap chua dat ten"} ban sao`
+      : `${source.name || "Unnamed Provider"} Copy`,
   };
   const relayProfiles = [...settings.relayProfiles];
   relayProfiles.splice(sourceIndex >= 0 ? sourceIndex + 1 : relayProfiles.length, 0, next);
