@@ -1567,6 +1567,7 @@ fn complete_relay_profile_config(profile: &RelayProfile) -> anyhow::Result<Strin
 pub fn normalize_relay_profile_for_storage(profile: &mut RelayProfile) -> anyhow::Result<()> {
     if profile.relay_mode == crate::settings::RelayMode::Official && !profile.official_mix_api_key {
         profile.config_contents.clear();
+        profile.auth_contents.clear();
         profile.model.clear();
         profile.base_url.clear();
         profile.upstream_base_url.clear();

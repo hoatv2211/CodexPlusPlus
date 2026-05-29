@@ -306,6 +306,23 @@ fn switch_saved_account_with_store(store: &SettingsStore, profile_id: &str) -> a
         .position(|profile| profile.id == profile_id)
         .ok_or_else(|| anyhow::anyhow!("Khong tim thay tai khoan da luu: {profile_id}"))?;
 
+    // Backfill target profile from .codex if it has no saved config
+    // This handles the case where user logged into .codex directly without switching first
+    if settings.relay_profiles[target_index].config_contents.is_empty()
+        || settings.relay_profiles[target_index].auth_contents.is_empty()
+    {
+        let mut common_config = relay_combined_common_config(&settings);
+        if let Err(_error) = crate::relay_config::backfill_relay_profile_from_home_with_common(
+            &home,
+            &mut settings.relay_profiles[target_index],
+            &mut common_config,
+        ) {
+            // Skip backfill silently - profile might have partial saved config
+        } else {
+            settings.relay_common_config_contents = common_config;
+        }
+    }
+
     if let Some(index) = current_index.filter(|index| settings.relay_profiles[*index].id != profile_id) {
         let mut common_config = relay_combined_common_config(&settings);
         crate::relay_config::backfill_relay_profile_from_home_with_common(

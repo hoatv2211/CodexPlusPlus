@@ -81,7 +81,6 @@ impl Default for RelayProfile {
     fn default() -> Self {
         Self {
             id: "default".to_string(),
-            name: "Trung chuyen mac dinh".to_string(),
             linked_ccs_provider_id: String::new(),
             name: "默认中转".to_string(),
             model: String::new(),
@@ -222,7 +221,6 @@ impl BackendSettings {
         {
             return RelayProfile {
                 id: default_active_relay_id(),
-                name: "Trung chuyen mac dinh".to_string(),
                 linked_ccs_provider_id: String::new(),
                 name: "默认中转".to_string(),
                 model: String::new(),
