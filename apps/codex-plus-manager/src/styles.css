@@ -71,6 +71,10 @@
   background: hsl(var(--background));
   color: hsl(var(--foreground));
   color-scheme: dark;
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-slow: 240ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   font-family:
     Inter, "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 14px;
@@ -82,6 +86,20 @@
 
 * {
   box-sizing: border-box;
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease),
+    opacity var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
 }
 
 body {
@@ -162,6 +180,7 @@ body {
 
 .update-dot:hover {
   background: hsl(45 93% 47% / 0.26);
+  transform: translateY(-1px);
 }
 
 .brand-subtitle {
@@ -174,8 +193,10 @@ body {
   display: grid;
   gap: 4px;
   margin-top: 12px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   max-height: calc(100vh - 82px);
+  padding-right: 2px;
 }
 
 .nav-item {
@@ -197,7 +218,8 @@ body {
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
-    color 140ms ease;
+    color 140ms ease,
+    transform 140ms ease;
 }
 
 .nav-icon {
@@ -207,6 +229,10 @@ body {
   height: 24px;
   border-radius: 6px;
   color: hsl(var(--muted-foreground));
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
 }
 
 .nav-label {
@@ -219,6 +245,7 @@ body {
 
 .nav-item:hover {
   background: hsl(var(--accent));
+  box-shadow: inset 2px 0 0 hsl(var(--primary) / 0.45);
 }
 
 .nav-item.active {
@@ -227,6 +254,7 @@ body {
 }
 
 .nav-item.active .nav-icon {
+  background: hsl(var(--background) / 0.55);
   color: hsl(var(--foreground));
 }
 
@@ -248,6 +276,7 @@ body {
   padding: 14px 20px;
   border-bottom: 1px solid hsl(var(--border));
   background: hsl(var(--card));
+  animation: topbar-enter var(--motion-normal) var(--motion-ease) both;
 }
 
 .topbar h1 {
@@ -276,6 +305,8 @@ body {
   overflow: auto;
   padding: 16px 20px 24px;
   scrollbar-gutter: stable;
+  animation: screen-enter 260ms var(--motion-ease) both;
+  will-change: opacity, transform;
 }
 
 .grid {
@@ -292,6 +323,15 @@ body {
   border-color: hsl(var(--border));
   background: hsl(var(--card));
   box-shadow: 0 10px 30px hsl(0 0% 0% / 0.12);
+  transition:
+    border-color var(--motion-normal) var(--motion-ease),
+    box-shadow var(--motion-normal) var(--motion-ease),
+    transform var(--motion-normal) var(--motion-ease);
+}
+
+.panel:hover {
+  border-color: hsl(var(--border) / 0.9);
+  box-shadow: 0 14px 38px hsl(0 0% 0% / 0.16);
 }
 
 .hero-panel {
@@ -462,28 +502,12 @@ body {
   margin-bottom: 10px;
 }
 
-.relay-import-row {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  background: hsl(var(--secondary) / 0.28);
+.relay-master-switch {
   margin-bottom: 10px;
-  padding: 10px 12px;
 }
 
-.relay-import-row > div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.relay-import-row span {
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-  overflow-wrap: anywhere;
+.relay-link-switch {
+  margin-bottom: 10px;
 }
 
 .relay-profile-card {
@@ -498,7 +522,12 @@ body {
   color: hsl(var(--foreground));
   padding: 14px 16px;
   text-align: left;
-  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+  transition:
+    border-color var(--motion-normal) var(--motion-ease),
+    background var(--motion-normal) var(--motion-ease),
+    box-shadow var(--motion-normal) var(--motion-ease),
+    opacity var(--motion-normal) var(--motion-ease),
+    transform var(--motion-normal) var(--motion-ease);
   user-select: none;
   -webkit-user-drag: none;
 }
@@ -506,6 +535,8 @@ body {
 .relay-profile-card:hover,
 .relay-profile-card:focus-visible {
   border-color: hsl(var(--primary) / 0.72);
+  box-shadow: 0 10px 24px hsl(var(--foreground) / 0.08);
+  transform: translateY(-1px);
   outline: none;
 }
 
@@ -535,6 +566,11 @@ body {
   touch-action: none;
   user-select: none;
   -webkit-user-drag: none;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease),
+    opacity var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
 }
 
 .relay-drag:hover,
@@ -542,6 +578,7 @@ body {
   background: hsl(var(--secondary));
   color: hsl(var(--foreground));
   opacity: 1;
+  transform: scale(1.04);
   outline: none;
 }
 
@@ -567,6 +604,15 @@ body {
   font-weight: 700;
   line-height: 1;
   text-transform: uppercase;
+  transition:
+    background-color var(--motion-normal) var(--motion-ease),
+    color var(--motion-normal) var(--motion-ease),
+    transform var(--motion-normal) var(--motion-ease);
+}
+
+.relay-profile-card:hover .relay-index,
+.relay-profile-card.active .relay-index {
+  transform: scale(1.03);
 }
 
 .relay-summary {
@@ -626,6 +672,7 @@ body {
   overflow: auto;
   background: hsl(var(--background));
   scrollbar-gutter: stable;
+  animation: relay-detail-enter 280ms var(--motion-ease) both;
 }
 
 .relay-detail-sticky {
@@ -636,6 +683,7 @@ body {
   padding: 10px 20px;
   background: hsl(var(--background));
   border-bottom: 1px solid hsl(var(--border));
+  animation: relay-detail-toolbar-enter 220ms var(--motion-ease) both;
 }
 
 .relay-detail-sticky .toolbar {
@@ -649,6 +697,16 @@ body {
   background: hsl(var(--background));
   margin: 0 20px;
   padding: 14px;
+  animation: relay-editor-enter 260ms var(--motion-ease) 40ms both;
+  transition:
+    border-color var(--motion-normal) var(--motion-ease),
+    box-shadow var(--motion-normal) var(--motion-ease);
+  will-change: opacity, transform;
+}
+
+.relay-profile-editor:focus-within {
+  border-color: hsl(var(--primary) / 0.38);
+  box-shadow: 0 12px 28px hsl(var(--foreground) / 0.08);
 }
 
 .relay-detail-page > .relay-file-grid {
@@ -682,6 +740,61 @@ body {
   grid-template-columns: 1fr;
   gap: 12px;
   margin-top: 12px;
+}
+
+.relay-profile-editor .field,
+.relay-profile-editor .relay-advanced-toggle,
+.relay-profile-editor .hint-line {
+  animation: relay-field-enter 220ms var(--motion-ease) both;
+}
+
+.relay-profile-editor .field:nth-child(1) {
+  animation-delay: 45ms;
+}
+
+.relay-profile-editor .field:nth-child(2) {
+  animation-delay: 70ms;
+}
+
+.relay-profile-editor .field:nth-child(3) {
+  animation-delay: 95ms;
+}
+
+.relay-profile-editor .field:nth-child(4),
+.relay-profile-editor .relay-advanced-toggle {
+  animation-delay: 120ms;
+}
+
+.relay-advanced-fields,
+.relay-api-fields {
+  display: grid;
+  grid-column: 1;
+  gap: 12px;
+  animation: relay-section-enter 240ms var(--motion-ease) both;
+  overflow: hidden;
+}
+
+.relay-advanced-fields {
+  animation-duration: 220ms;
+}
+
+.relay-advanced-fields .field:nth-child(1),
+.relay-api-fields .field:nth-child(1) {
+  animation-delay: 20ms;
+}
+
+.relay-advanced-fields .field:nth-child(2),
+.relay-api-fields .field:nth-child(2) {
+  animation-delay: 45ms;
+}
+
+.relay-advanced-fields .field:nth-child(3),
+.relay-api-fields .field:nth-child(3) {
+  animation-delay: 70ms;
+}
+
+.relay-api-fields .field:nth-child(4) {
+  animation-delay: 95ms;
 }
 
 .relay-field-name {
@@ -778,7 +891,9 @@ body {
   font-weight: 650;
   transition:
     border-color 140ms ease,
-    background-color 140ms ease;
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
 }
 
 .protocol-option.active {
@@ -789,6 +904,7 @@ body {
 .protocol-option:hover:not(.active) {
   border-color: hsl(var(--primary) / 0.45);
   background: hsl(var(--secondary) / 0.62);
+  transform: translateY(-1px);
 }
 
 .inline-check {
@@ -803,6 +919,9 @@ body {
   color: hsl(var(--foreground));
   font-size: 13px;
   font-weight: 650;
+  transition:
+    border-color var(--motion-fast) var(--motion-ease),
+    background-color var(--motion-fast) var(--motion-ease);
 }
 
 .inline-check input {
@@ -819,10 +938,15 @@ body {
   color: hsl(var(--foreground));
   padding: 0 12px;
   font: inherit;
+  transition:
+    border-color var(--motion-fast) var(--motion-ease),
+    background-color var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-fast) var(--motion-ease);
 }
 
 .field-select:focus-visible {
   border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.14);
   outline: none;
 }
 
@@ -837,6 +961,14 @@ body {
   border-radius: 8px;
   background: hsl(var(--background));
   padding: 14px;
+  transition:
+    border-color var(--motion-normal) var(--motion-ease),
+    box-shadow var(--motion-normal) var(--motion-ease);
+}
+
+.relay-context-panel:focus-within {
+  border-color: hsl(var(--primary) / 0.38);
+  box-shadow: 0 10px 26px hsl(var(--foreground) / 0.07);
 }
 
 .relay-context-head {
@@ -885,6 +1017,17 @@ body {
   font: inherit;
   font-size: 13px;
   font-weight: 650;
+  transition:
+    border-color var(--motion-fast) var(--motion-ease),
+    background-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
+}
+
+.segmented button:hover:not(.active) {
+  border-color: hsl(var(--primary) / 0.42);
+  background: hsl(var(--secondary) / 0.6);
+  transform: translateY(-1px);
 }
 
 .segmented button.active {
@@ -912,6 +1055,17 @@ body {
   border-radius: 8px;
   background: hsl(var(--secondary) / 0.18);
   padding: 8px;
+  transition:
+    border-color var(--motion-normal) var(--motion-ease),
+    background-color var(--motion-normal) var(--motion-ease),
+    box-shadow var(--motion-normal) var(--motion-ease),
+    transform var(--motion-normal) var(--motion-ease);
+}
+
+.relay-context-row:hover {
+  border-color: hsl(var(--primary) / 0.32);
+  background: hsl(var(--secondary) / 0.28);
+  transform: translateY(-1px);
 }
 
 .context-title {
@@ -1034,6 +1188,9 @@ body {
   display: grid;
   gap: 10px;
   min-width: 0;
+  transition:
+    opacity var(--motion-normal) var(--motion-ease),
+    transform var(--motion-normal) var(--motion-ease);
 }
 
 .relay-file-textarea {
@@ -1070,13 +1227,20 @@ body {
   text-align: left;
   transition:
     border-color 140ms ease,
-    background-color 140ms ease;
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
 }
 
 .mode-option:hover,
 .mode-option.active {
   border-color: hsl(var(--primary));
   background: hsl(var(--accent));
+}
+
+.mode-option:hover {
+  box-shadow: 0 10px 22px hsl(var(--foreground) / 0.07);
+  transform: translateY(-1px);
 }
 
 .mode-option strong {
@@ -1118,6 +1282,18 @@ body {
   border-radius: 8px;
   background: hsl(var(--background));
   padding: 11px 12px;
+  transition:
+    border-color var(--motion-normal) var(--motion-ease),
+    background-color var(--motion-normal) var(--motion-ease),
+    box-shadow var(--motion-normal) var(--motion-ease),
+    transform var(--motion-normal) var(--motion-ease);
+}
+
+.health-item:hover,
+.feature-item:hover,
+.theme-row:hover {
+  border-color: hsl(var(--primary) / 0.32);
+  background: hsl(var(--accent) / 0.55);
 }
 
 .feature-item,
@@ -1135,6 +1311,14 @@ body {
   background: hsl(var(--background));
   padding: 12px;
   margin-bottom: 12px;
+  transition:
+    border-color var(--motion-normal) var(--motion-ease),
+    background-color var(--motion-normal) var(--motion-ease);
+}
+
+.switch-row:hover {
+  border-color: hsl(var(--primary) / 0.32);
+  background: hsl(var(--accent) / 0.45);
 }
 
 .switch-row input {
@@ -1167,6 +1351,15 @@ body {
   border-radius: 8px;
   background: hsl(var(--background));
   padding: 10px 12px;
+  transition:
+    border-color var(--motion-normal) var(--motion-ease),
+    background-color var(--motion-normal) var(--motion-ease),
+    transform var(--motion-normal) var(--motion-ease);
+}
+
+.guide-step:hover {
+  border-color: hsl(var(--primary) / 0.32);
+  background: hsl(var(--accent) / 0.45);
 }
 
 .guide-step > span {
@@ -1267,12 +1460,16 @@ body {
   text-align: left;
   transition:
     border-color 140ms ease,
-    background-color 140ms ease;
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
 }
 
 .ad-card:hover {
   border-color: hsl(var(--ring));
   background: hsl(var(--accent));
+  box-shadow: 0 12px 26px hsl(var(--foreground) / 0.08);
+  transform: translateY(-1px);
 }
 
 .ad-card strong {
@@ -1393,6 +1590,14 @@ body {
   font-size: 12px;
 }
 
+.log-lines:focus-within,
+.log-view:focus-visible,
+.launch-args-input:focus-visible,
+.relay-file-textarea:focus-visible,
+.context-editor-textarea:focus-visible {
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.14);
+}
+
 .log-line {
   display: grid;
   grid-template-columns: 54px minmax(0, 1fr);
@@ -1446,6 +1651,17 @@ body {
   border-radius: 8px;
   background: hsl(var(--card));
   padding: 14px;
+  transition:
+    border-color var(--motion-normal) var(--motion-ease),
+    background-color var(--motion-normal) var(--motion-ease),
+    box-shadow var(--motion-normal) var(--motion-ease),
+    transform var(--motion-normal) var(--motion-ease);
+}
+
+.script-market-card:hover {
+  border-color: hsl(var(--primary) / 0.36);
+  box-shadow: 0 12px 26px hsl(var(--foreground) / 0.08);
+  transform: translateY(-1px);
 }
 
 .script-market-title {
@@ -1607,6 +1823,101 @@ body {
   }
 }
 
+@keyframes screen-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.992);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes topbar-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes relay-detail-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes relay-detail-toolbar-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes relay-editor-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.992);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes relay-section-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes relay-field-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+}
+
 @media (max-width: 860px) {
   body {
     min-width: 0;
@@ -1666,11 +1977,6 @@ body {
 
   .script-row-actions {
     justify-content: flex-start;
-  }
-
-  .relay-import-row {
-    align-items: stretch;
-    flex-direction: column;
   }
 
   .health-item {
