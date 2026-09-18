@@ -1,4 +1,6 @@
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +10,10 @@ pub mod windows;
 pub const SILENT_NAME: &str = "Codex++";
 pub const MANAGER_NAME: &str = "Codex++ Quan ly";
 pub const SILENT_BINARY: &str = "codex-plus-plus";
+pub const MACOS_SILENT_EXECUTABLE: &str = "CodexPlusPlus";
 pub const MANAGER_BINARY: &str = "codex-plus-plus-manager";
+pub const SILENT_BUNDLE_ID: &str = "com.bigpizzav3.codexplusplus";
+pub const MANAGER_BUNDLE_ID: &str = "com.bigpizzav3.codexplusplus.manager";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -115,9 +120,21 @@ pub fn build_macos_app_bundle(options: &InstallOptions, manager: bool) -> MacosA
 
 pub fn remove_owned_data() -> std::io::Result<()> {
     let dir = crate::paths::default_app_state_dir();
-    if dir.exists() {
-        std::fs::remove_dir_all(dir)?;
+    if !dir.exists() {
+        return Ok(());
     }
+    // 卸载流程会递归删除，路径来自环境/推导，先过一道"不许删 CODEX_HOME 及其祖先"
+    // 的兜底（#2146）。守卫只在这条路径确实指向 home 时才会拒绝，正常卸载不受影响。
+    if let Err(error) = crate::codex_home::ensure_safe_recursive_removal(
+        &dir,
+        &crate::codex_home::default_codex_home_dir(),
+    ) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            error.to_string(),
+        ));
+    }
+    std::fs::remove_dir_all(dir)?;
     Ok(())
 }
 
@@ -131,7 +148,20 @@ pub fn default_install_root() -> Option<PathBuf> {
 
     #[cfg(target_os = "macos")]
     {
-        return Some(PathBuf::from("/Applications"));
+        let sys_apps = PathBuf::from("/Applications");
+        if sys_apps.join(format!("{SILENT_NAME}.app")).exists()
+            || sys_apps.join(format!("{MANAGER_NAME}.app")).exists()
+        {
+            return Some(sys_apps);
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = macos_applications_dir_from_exe(&exe) {
+                if is_macos_applications_dir(&dir) {
+                    return Some(dir);
+                }
+            }
+        }
+        return Some(sys_apps);
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
@@ -231,40 +261,221 @@ pub fn companion_binary_path(binary: &str) -> PathBuf {
     companion_binary_path_from_exe(&exe, binary)
 }
 
+pub fn spawn_companion<I, S>(binary: &str, args: I) -> anyhow::Result<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let args = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_os_string())
+        .collect::<Vec<OsString>>();
+
+    #[cfg(target_os = "macos")]
+    {
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+        if let Some(bundle_id) = macos_companion_bundle_identifier_from_exe(&exe, binary) {
+            let launch_result = Command::new("/usr/bin/open")
+                .args(["-n", "-b", bundle_id, "--args"])
+                .args(&args)
+                .status();
+            if launch_result.as_ref().is_ok_and(|status| status.success()) {
+                return Ok(format!("bundle:{bundle_id}"));
+            }
+            let fallback = companion_binary_path_from_exe(&exe, binary);
+            if !fallback.exists() {
+                let detail = launch_result
+                    .map(|status| status.to_string())
+                    .unwrap_or_else(|error| error.to_string());
+                anyhow::bail!("macOS Launch Services 无法启动 bundle {bundle_id}：{detail}");
+            }
+        }
+    }
+
+    let path = companion_binary_path(binary);
+    let mut command = Command::new(&path);
+    command.args(&args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(crate::windows_create_no_window());
+    }
+    command
+        .spawn()
+        .map_err(|error| anyhow::anyhow!("无法启动 {}：{error}", path.to_string_lossy()))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+pub fn open_or_activate_manager() -> anyhow::Result<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+        if let Some(bundle_id) = macos_companion_bundle_identifier_from_exe(&exe, MANAGER_BINARY) {
+            let activated = Command::new("/usr/bin/open")
+                .args(["-b", bundle_id])
+                .status()
+                .is_ok_and(|status| status.success());
+            if activated {
+                return Ok(format!("bundle:{bundle_id}"));
+            }
+        }
+    }
+
+    spawn_companion(MANAGER_BINARY, std::iter::empty::<&str>())
+}
+
+pub fn macos_companion_bundle_identifier_from_exe(
+    exe: &Path,
+    binary: &str,
+) -> Option<&'static str> {
+    let (_, app_name) = macos_applications_dir_and_app_name_from_exe(exe)?;
+    let known_bundle =
+        app_name == format!("{SILENT_NAME}.app") || app_name == format!("{MANAGER_NAME}.app");
+    if !known_bundle {
+        return None;
+    }
+    match binary {
+        SILENT_BINARY => Some(SILENT_BUNDLE_ID),
+        MANAGER_BINARY => Some(MANAGER_BUNDLE_ID),
+        _ => None,
+    }
+}
+
 pub fn companion_binary_path_from_exe(exe: &Path, binary: &str) -> PathBuf {
     let dir = exe.parent().unwrap_or_else(|| Path::new("."));
     let suffix = if cfg!(windows) { ".exe" } else { "" };
-    if binary == SILENT_BINARY {
-        if let Some(sibling_app_binary) = macos_silent_app_binary_from_exe(exe) {
-            return sibling_app_binary;
+    if let Some(bundle_binary) = macos_companion_binary_from_exe(exe, binary) {
+        // A local Tauri bundle contains the manager only. Prefer the freshly
+        // built launcher beside `target/release` when the sibling app is not
+        // present, while keeping the installed /Applications layout intact.
+        if bundle_binary.exists() || !is_macos_development_bundle(exe) {
+            return bundle_binary;
         }
-        let same_bundle = dir.join(binary);
-        if same_bundle.exists() {
-            return same_bundle;
-        }
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(development_binary) = macos_development_companion_binary(exe, binary) {
+        return development_binary;
+    }
+    let same_bundle = dir.join(binary);
+    if same_bundle.exists() {
+        return same_bundle;
     }
     dir.join(format!("{binary}{suffix}"))
 }
 
-fn macos_silent_app_binary_from_exe(exe: &Path) -> Option<PathBuf> {
-    macos_applications_dir_from_exe(exe).map(|applications_dir| {
-        applications_dir
-            .join(format!("{SILENT_NAME}.app"))
-            .join("Contents")
-            .join("MacOS")
-            .join("CodexPlusPlus")
-    })
+fn is_macos_development_bundle(exe: &Path) -> bool {
+    exe.components()
+        .any(|component| component.as_os_str() == "target")
+        && exe
+            .components()
+            .any(|component| component.as_os_str() == "bundle")
 }
 
-fn macos_applications_dir_from_exe(exe: &Path) -> Option<PathBuf> {
-    let mut path = exe;
+#[cfg(target_os = "macos")]
+fn macos_development_companion_binary(exe: &Path, binary: &str) -> Option<PathBuf> {
+    let mut path = exe.parent()?;
     while let Some(parent) = path.parent() {
-        if path.extension().and_then(|extension| extension.to_str()) == Some("app") {
-            return Some(parent.to_path_buf());
+        if matches!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("release" | "debug")
+        ) {
+            let candidate = path.join(binary);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
         }
         path = parent;
     }
     None
+}
+
+fn macos_companion_binary_from_exe(exe: &Path, binary: &str) -> Option<PathBuf> {
+    let (applications_dir, app_name) = macos_applications_dir_and_app_name_from_exe(exe)?;
+    if binary == SILENT_BINARY {
+        if app_name == format!("{SILENT_NAME}.app") {
+            return Some(macos_preferred_bundle_binary(
+                exe,
+                SILENT_BINARY,
+                "CodexPlusPlus",
+            ));
+        }
+        let macos = applications_dir
+            .join(format!("{SILENT_NAME}.app"))
+            .join("Contents")
+            .join("MacOS");
+        return Some(
+            macos
+                .join(SILENT_BINARY)
+                .exists()
+                .then(|| macos.join(SILENT_BINARY))
+                .unwrap_or_else(|| macos.join("CodexPlusPlus")),
+        );
+    }
+    if binary == MANAGER_BINARY {
+        if app_name == format!("{MANAGER_NAME}.app") {
+            return Some(macos_preferred_bundle_binary(
+                exe,
+                MANAGER_BINARY,
+                "CodexPlusPlusManager",
+            ));
+        }
+        let macos = applications_dir
+            .join(format!("{MANAGER_NAME}.app"))
+            .join("Contents")
+            .join("MacOS");
+        return Some(
+            macos
+                .join(MANAGER_BINARY)
+                .exists()
+                .then(|| macos.join(MANAGER_BINARY))
+                .unwrap_or_else(|| macos.join("CodexPlusPlusManager")),
+        );
+    }
+    None
+}
+
+fn macos_preferred_bundle_binary(
+    exe: &Path,
+    sidecar_name: &str,
+    bundle_executable_name: &str,
+) -> PathBuf {
+    let macos = exe.parent().unwrap_or_else(|| Path::new("."));
+    let sidecar = macos.join(sidecar_name);
+    if sidecar.exists() {
+        return sidecar;
+    }
+    let bundle_executable = macos.join(bundle_executable_name);
+    if bundle_executable.exists() {
+        return bundle_executable;
+    }
+    exe.to_path_buf()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_applications_dir_from_exe(exe: &Path) -> Option<PathBuf> {
+    macos_applications_dir_and_app_name_from_exe(exe).map(|(dir, _)| dir)
+}
+
+fn macos_applications_dir_and_app_name_from_exe(exe: &Path) -> Option<(PathBuf, String)> {
+    let mut path = exe;
+    while let Some(parent) = path.parent() {
+        if path.extension().and_then(|extension| extension.to_str()) == Some("app") {
+            let app_name = path.file_name()?.to_string_lossy().to_string();
+            return Some((parent.to_path_buf(), app_name));
+        }
+        path = parent;
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn is_macos_applications_dir(path: &Path) -> bool {
+    if path == Path::new("/Applications") {
+        return true;
+    }
+    directories::BaseDirs::new()
+        .map(|dirs| path == dirs.home_dir().join("Applications"))
+        .unwrap_or(false)
 }
 
 pub(crate) fn install_root_or_default(options: &InstallOptions) -> PathBuf {

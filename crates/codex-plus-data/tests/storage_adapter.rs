@@ -1,5 +1,5 @@
 use codex_plus_core::models::{DeleteStatus, SessionRef};
-use codex_plus_data::{BackupStore, SQLiteStorageAdapter};
+use codex_plus_data::{BackupStore, SQLiteStorageAdapter, delete_local_from_paths};
 use rusqlite::Connection;
 use serde_json::json;
 use std::fs;
@@ -81,6 +81,14 @@ fn create_codex_thread_db(path: &Path, rollout_path: &Path) {
         [],
     )
     .unwrap();
+}
+
+fn thread_count(path: &Path, id: &str) -> i64 {
+    let db = Connection::open(path).unwrap();
+    db.query_row("SELECT COUNT(*) FROM threads WHERE id = ?1", [id], |row| {
+        row.get::<_, i64>(0)
+    })
+    .unwrap()
 }
 
 #[test]
@@ -272,6 +280,48 @@ fn undo_fails_for_unknown_backup_table_without_executing_it() {
 }
 
 #[test]
+fn undo_rejects_backup_file_paths_outside_thread_rollouts() {
+    let tmp = tempdir().unwrap();
+    let db_path = tmp.path().join("state_5.sqlite");
+    let rollout_path = tmp.path().join("rollout.jsonl");
+    let outside_path = tmp.path().join("outside.txt");
+    fs::write(&rollout_path, "{\"type\":\"message\"}\n").unwrap();
+    create_codex_thread_db(&db_path, &rollout_path);
+    let backup_store = BackupStore::new(tmp.path().join("backups"));
+    let adapter = SQLiteStorageAdapter::new(&db_path, backup_store.clone());
+    let deleted = adapter.delete_local(&session("t1", "Codex Thread"));
+    let token = deleted.undo_token.as_deref().unwrap();
+    let backup_path = backup_store.path_for(token);
+    let mut backup: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&backup_path).unwrap()).unwrap();
+    backup["tables"]["__files"] = json!([{
+        "path": outside_path.to_string_lossy().to_string(),
+        "content_b64": "b3duZWQ="
+    }]);
+    fs::write(&backup_path, serde_json::to_string_pretty(&backup).unwrap()).unwrap();
+
+    let restored = adapter.undo(token);
+
+    assert_eq!(restored.status, DeleteStatus::Failed);
+    assert_eq!(restored.undo_token.as_deref(), Some(token));
+    assert!(
+        restored
+            .message
+            .to_lowercase()
+            .contains("unexpected backup file path")
+    );
+    assert!(!outside_path.exists());
+    let db = Connection::open(&db_path).unwrap();
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM threads WHERE id = 't1'", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
 fn generic_delete_rolls_back_when_later_delete_fails() {
     let tmp = tempdir().unwrap();
     let db_path = tmp.path().join("codex.sqlite");
@@ -373,6 +423,466 @@ fn delete_codex_thread_schema_removes_related_rows_file_and_undo_restores_everyt
 }
 
 #[test]
+fn delete_codex_thread_removes_session_index_entry_and_undo_restores_it() {
+    let tmp = tempdir().unwrap();
+    let db_path = tmp.path().join("state_5.sqlite");
+    let rollout_path = tmp.path().join("rollout.jsonl");
+    let index_path = tmp.path().join("session_index.jsonl");
+    fs::write(&rollout_path, "{\"type\":\"message\"}\n").unwrap();
+    create_codex_thread_db(&db_path, &rollout_path);
+    let index_lines = [
+        "{\"id\":\"t1\",\"thread_name\":\"Codex Thread\",\"updated_at\":\"2026-08-18T00:00:00Z\"}",
+        "{\"id\":\"other\",\"thread_name\":\"Keep me\",\"updated_at\":\"2026-08-18T00:00:01Z\"}",
+    ];
+    fs::write(&index_path, index_lines.join("\n") + "\n").unwrap();
+    let adapter = SQLiteStorageAdapter::new(&db_path, BackupStore::new(tmp.path().join("backups")))
+        .with_codex_home(tmp.path());
+
+    let deleted = adapter.delete_local(&session("local:t1", "Codex Thread"));
+
+    assert_eq!(deleted.status, DeleteStatus::LocalDeleted);
+    let index_text = fs::read_to_string(&index_path).unwrap();
+    assert!(index_text.contains("\"id\":\"other\""));
+    assert!(!index_text.contains("\"id\":\"t1\""));
+
+    let restored = adapter.undo(deleted.undo_token.as_deref().unwrap());
+
+    assert_eq!(restored.status, DeleteStatus::Undone);
+    let index_text = fs::read_to_string(&index_path).unwrap();
+    assert!(index_text.contains("\"id\":\"t1\""));
+    assert_eq!(index_text.matches("\"id\":\"t1\"").count(), 1);
+    assert_eq!(index_text.matches("\"id\":\"other\"").count(), 1);
+}
+
+#[test]
+fn delete_codex_thread_sqlite_dir_layout_removes_session_index_entry_and_undo_restores_it() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path();
+    let sqlite_dir = home.join("sqlite");
+    fs::create_dir_all(&sqlite_dir).unwrap();
+    let db_path = sqlite_dir.join("codex-dev.db");
+    let rollout_path = home.join("rollout.jsonl");
+    let index_path = home.join("session_index.jsonl");
+    fs::write(&rollout_path, "{\"type\":\"message\"}\n").unwrap();
+    create_codex_thread_db(&db_path, &rollout_path);
+    let index_lines = [
+        "{\"id\":\"t1\",\"thread_name\":\"Codex Thread\",\"updated_at\":\"2026-08-18T00:00:00Z\"}",
+        "{\"id\":\"other\",\"thread_name\":\"Keep me\",\"updated_at\":\"2026-08-18T00:00:01Z\"}",
+    ];
+    fs::write(&index_path, index_lines.join("\n") + "\n").unwrap();
+    let adapter = SQLiteStorageAdapter::new(&db_path, BackupStore::new(tmp.path().join("backups")))
+        .with_codex_home(home);
+
+    let deleted = adapter.delete_local(&session("local:t1", "Codex Thread"));
+
+    assert_eq!(deleted.status, DeleteStatus::LocalDeleted);
+    let index_text = fs::read_to_string(&index_path).unwrap();
+    assert!(index_text.contains("\"id\":\"other\""));
+    assert!(!index_text.contains("\"id\":\"t1\""));
+    assert_eq!(thread_count(&db_path, "t1"), 0);
+    assert!(!rollout_path.exists());
+
+    let restored = adapter.undo(deleted.undo_token.as_deref().unwrap());
+
+    assert_eq!(restored.status, DeleteStatus::Undone);
+    let index_text = fs::read_to_string(&index_path).unwrap();
+    assert!(index_text.contains("\"id\":\"t1\""));
+    assert_eq!(index_text.matches("\"id\":\"t1\"").count(), 1);
+    assert_eq!(index_text.matches("\"id\":\"other\"").count(), 1);
+    assert_eq!(thread_count(&db_path, "t1"), 1);
+}
+
+/// 删除成功后必须一并清 session_index.jsonl，否则重启后 UI 从索引读，
+/// 会话又冒出来、再删再冒（#1979）。
+///
+/// 三种 schema 里原先只有 delete_codex_thread 清了索引，这条覆盖 generic
+/// sessions 那条路径。
+#[test]
+fn delete_codex_thread_clears_sidebar_global_state_and_catalog_cache() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join(".codex");
+    let sqlite_dir = home.join("sqlite");
+    let rollout = home.join("sessions/rollout-t1.jsonl");
+    fs::create_dir_all(rollout.parent().unwrap()).unwrap();
+    fs::create_dir_all(&sqlite_dir).unwrap();
+    fs::write(&rollout, "{}\n").unwrap();
+    let state_db = home.join("state_5.sqlite");
+    create_codex_thread_db(&state_db, &rollout);
+    let keep_id = "keep";
+    fs::write(
+        home.join(".codex-global-state.json"),
+        json!({
+            "projectless-thread-ids": ["local:t1", "t1", keep_id],
+            "thread-projectless-output-directories": {"t1": "C:/out", "keep": "C:/keep"},
+            "thread-workspace-root-hints": {"local:t1": "C:/workspace", "keep": "C:/keep"},
+            "thread-writable-roots": {"t1": ["C:/work"], "keep": ["C:/keep"]},
+            "electron-persisted-atom-state": {
+                "thread-client-id-v1:t1": "client",
+                "thread-reference-capability:local%3At1": "capability",
+                "thread-client-id-v1:keep": "keep-client",
+                "sidebar-width": 296
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(
+        home.join("session_index.jsonl"),
+        "{\"id\":\"t1\"}\n{\"id\":\"keep\"}\n",
+    )
+    .unwrap();
+    let catalog_db = Connection::open(sqlite_dir.join("codex-dev.db")).unwrap();
+    catalog_db
+        .execute("CREATE TABLE local_thread_catalog (thread_id TEXT PRIMARY KEY)", [])
+        .unwrap();
+    catalog_db
+        .execute("CREATE TABLE thread_timeline_ledger (thread_id TEXT)", [])
+        .unwrap();
+    catalog_db
+        .execute("CREATE TABLE local_thread_catalog_scan_entries (thread_id TEXT)", [])
+        .unwrap();
+    catalog_db
+        .execute("INSERT INTO local_thread_catalog VALUES ('t1'), ('keep')", [])
+        .unwrap();
+    catalog_db
+        .execute("INSERT INTO thread_timeline_ledger VALUES ('t1'), ('keep')", [])
+        .unwrap();
+    catalog_db
+        .execute("INSERT INTO local_thread_catalog_scan_entries VALUES ('t1'), ('keep')", [])
+        .unwrap();
+    drop(catalog_db);
+
+    let deleted = SQLiteStorageAdapter::new(
+        &state_db,
+        BackupStore::new(tmp.path().join("backups")),
+    )
+    .with_codex_home(&home)
+    .delete_local(&session("local:t1", "Codex Thread"));
+    assert_eq!(deleted.status, DeleteStatus::LocalDeleted);
+    let state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(home.join(".codex-global-state.json")).unwrap())
+            .unwrap();
+    assert_eq!(state["projectless-thread-ids"], json!([keep_id]));
+    assert!(state["thread-projectless-output-directories"].get("t1").is_none());
+    assert!(state["thread-workspace-root-hints"].get("local:t1").is_none());
+    assert!(state["thread-writable-roots"].get("t1").is_none());
+    assert!(state["electron-persisted-atom-state"]
+        .get("thread-client-id-v1:t1")
+        .is_none());
+    assert!(state["electron-persisted-atom-state"]
+        .get("thread-client-id-v1:keep")
+        .is_some());
+    let catalog_db = Connection::open(sqlite_dir.join("codex-dev.db")).unwrap();
+    for table in [
+        "local_thread_catalog",
+        "thread_timeline_ledger",
+        "local_thread_catalog_scan_entries",
+    ] {
+        let count: i64 = catalog_db
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE thread_id = 't1'"),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
+
+    let restored = SQLiteStorageAdapter::new(
+        &state_db,
+        BackupStore::new(tmp.path().join("backups")),
+    )
+    .with_codex_home(&home)
+    .undo(deleted.undo_token.as_deref().unwrap());
+    assert_eq!(restored.status, DeleteStatus::Undone);
+    let state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(home.join(".codex-global-state.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        state["projectless-thread-ids"],
+        json!([keep_id, "local:t1", "t1"])
+    );
+    assert_eq!(
+        state["thread-projectless-output-directories"]["t1"],
+        "C:/out"
+    );
+    assert_eq!(
+        state["electron-persisted-atom-state"]["thread-client-id-v1:t1"],
+        "client"
+    );
+    let catalog_db = Connection::open(sqlite_dir.join("codex-dev.db")).unwrap();
+    for table in [
+        "local_thread_catalog",
+        "thread_timeline_ledger",
+        "local_thread_catalog_scan_entries",
+    ] {
+        let count: i64 = catalog_db
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE thread_id = 't1'"),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "{table}");
+    }
+}
+
+#[test]
+fn delete_local_clears_the_session_index_for_generic_sessions() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join("codex-home");
+    fs::create_dir_all(&home).unwrap();
+    let db_path = tmp.path().join("generic.sqlite");
+    create_supported_db(&db_path);
+    fs::write(
+        home.join("session_index.jsonl"),
+        "{\"id\":\"s1\",\"thread_name\":\"A\",\"updated_at\":\"2026-08-26T00:00:00Z\"}\n\
+{\"id\":\"keep\",\"thread_name\":\"B\",\"updated_at\":\"2026-08-26T00:00:00Z\"}\n",
+    )
+    .unwrap();
+
+    let result = SQLiteStorageAdapter::new(db_path, BackupStore::new(tmp.path().join("backups")))
+        .with_codex_home(&home)
+        .delete_local(&session("s1", "Session"));
+
+    assert_eq!(
+        result.status,
+        DeleteStatus::LocalDeleted,
+        "{}",
+        result.message
+    );
+    let index_text = fs::read_to_string(home.join("session_index.jsonl")).unwrap();
+    assert!(!index_text.contains("\"s1\""), "删除后索引里不该还有该会话");
+    assert!(index_text.contains("keep"), "其它会话不该被误删");
+}
+
+/// 纯 API 模式（model_provider = "custom"）下 threads 表是空的，删除会话时每个
+/// 数据库都查不到记录，于是报「Thread not found in local storage」而会话行仍留在
+/// 列表里——因为 UI 读的是 session_index.jsonl，那条记录没人清（#1998）。
+///
+/// 数据库里没有不代表索引里没有：能从索引清掉就算删除成功。
+#[test]
+fn delete_local_from_paths_falls_back_to_session_index_when_no_database_row_exists() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join("codex-home");
+    fs::create_dir_all(&home).unwrap();
+    // 空库：模拟 API 密钥模式下 threads 表没有记录
+    let empty_db = tmp.path().join("empty.sqlite");
+    let unrelated_rollout = tmp.path().join("unrelated.jsonl");
+    fs::write(&unrelated_rollout, "{\"type\":\"message\"}\n").unwrap();
+    create_codex_thread_db(&empty_db, &unrelated_rollout);
+    // 但索引里有这条会话
+    fs::write(
+        home.join("session_index.jsonl"),
+        "{\"id\":\"api-only\",\"thread_name\":\"A\",\"updated_at\":\"2026-08-26T00:00:00Z\"}\n\
+{\"id\":\"keep\",\"thread_name\":\"B\",\"updated_at\":\"2026-08-26T00:00:00Z\"}\n",
+    )
+    .unwrap();
+
+    let result = delete_local_from_paths(
+        vec![empty_db.clone()],
+        BackupStore::new(tmp.path().join("backups")),
+        &session("api-only", "Codex Thread"),
+        Some(home.as_path()),
+    );
+
+    assert_eq!(
+        result.status,
+        DeleteStatus::LocalDeleted,
+        "{}",
+        result.message
+    );
+    let index_text = fs::read_to_string(home.join("session_index.jsonl")).unwrap();
+    assert!(!index_text.contains("api-only"), "目标会话应从索引移除");
+    assert!(index_text.contains("keep"), "其它会话不该被误删");
+}
+
+/// 数据库和索引里都没有，才是真的找不到——不能因为加了兜底就把所有失败都吞掉。
+#[test]
+fn delete_local_from_paths_still_fails_when_neither_database_nor_index_has_the_thread() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join("codex-home");
+    fs::create_dir_all(&home).unwrap();
+    let empty_db = tmp.path().join("empty.sqlite");
+    let unrelated_rollout = tmp.path().join("unrelated.jsonl");
+    fs::write(&unrelated_rollout, "{\"type\":\"message\"}\n").unwrap();
+    create_codex_thread_db(&empty_db, &unrelated_rollout);
+    fs::write(
+        home.join("session_index.jsonl"),
+        "{\"id\":\"other\",\"thread_name\":\"C\",\"updated_at\":\"2026-08-26T00:00:00Z\"}\n",
+    )
+    .unwrap();
+
+    let result = delete_local_from_paths(
+        vec![empty_db],
+        BackupStore::new(tmp.path().join("backups")),
+        &session("missing", "Codex Thread"),
+        Some(home.as_path()),
+    );
+
+    assert_eq!(result.status, DeleteStatus::Failed);
+    assert!(
+        fs::read_to_string(home.join("session_index.jsonl"))
+            .unwrap()
+            .contains("other")
+    );
+}
+
+#[test]
+fn delete_local_from_paths_removes_duplicate_threads_from_all_databases() {
+    let tmp = tempdir().unwrap();
+    let first_db = tmp.path().join("first.sqlite");
+    let second_db = tmp.path().join("second.sqlite");
+    let first_rollout = tmp.path().join("first.jsonl");
+    let second_rollout = tmp.path().join("second.jsonl");
+    fs::write(&first_rollout, "{\"type\":\"message\"}\n").unwrap();
+    fs::write(&second_rollout, "{\"type\":\"message\"}\n").unwrap();
+    create_codex_thread_db(&first_db, &first_rollout);
+    create_codex_thread_db(&second_db, &second_rollout);
+
+    let result = delete_local_from_paths(
+        vec![first_db.clone(), second_db.clone()],
+        BackupStore::new(tmp.path().join("backups")),
+        &session("t1", "Codex Thread"),
+        None,
+    );
+
+    assert_eq!(result.status, DeleteStatus::LocalDeleted);
+    assert_eq!(result.message, "已从 2 个本地存储删除");
+    assert_eq!(thread_count(&first_db, "t1"), 0);
+    assert_eq!(thread_count(&second_db, "t1"), 0);
+    assert!(!first_rollout.exists());
+    assert!(!second_rollout.exists());
+}
+
+#[test]
+fn delete_local_from_paths_undo_restores_duplicate_threads_and_shared_rollout_to_source_databases()
+{
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join("codex-home");
+    let sqlite_dir = home.join("sqlite");
+    fs::create_dir_all(&sqlite_dir).unwrap();
+    let old_db = sqlite_dir.join("state_5.sqlite");
+    let new_db = home.join("state_5.sqlite");
+    let rollout = home.join("rollout.jsonl");
+    let rollout_text = "{\"type\":\"message\",\"payload\":\"original\"}\n";
+    fs::write(&rollout, rollout_text).unwrap();
+    create_codex_thread_db(&old_db, &rollout);
+    create_codex_thread_db(&new_db, &rollout);
+    let db = Connection::open(&new_db).unwrap();
+    db.execute("ALTER TABLE threads ADD COLUMN recency_at INTEGER", [])
+        .unwrap();
+    db.execute("UPDATE threads SET recency_at = 42 WHERE id = 't1'", [])
+        .unwrap();
+    drop(db);
+
+    let backups = BackupStore::new(tmp.path().join("backups"));
+    let deleted = delete_local_from_paths(
+        vec![old_db.clone(), new_db.clone()],
+        backups.clone(),
+        &session("t1", "Codex Thread"),
+        None,
+    );
+    let token = deleted.undo_token.as_deref().unwrap();
+
+    assert_eq!(deleted.status, DeleteStatus::LocalDeleted);
+    assert_eq!(deleted.message, "已从 2 个本地存储删除");
+    assert_eq!(thread_count(&old_db, "t1"), 0);
+    assert_eq!(thread_count(&new_db, "t1"), 0);
+    assert!(!rollout.exists());
+
+    let restored = SQLiteStorageAdapter::new(&old_db, backups)
+        .with_allowed_db_paths(vec![old_db.clone(), new_db.clone()])
+        .undo(token);
+
+    assert_eq!(restored.status, DeleteStatus::Undone);
+    assert_eq!(restored.undo_token.as_deref(), Some(token));
+    assert_eq!(thread_count(&old_db, "t1"), 1);
+    assert_eq!(thread_count(&new_db, "t1"), 1);
+    assert_eq!(fs::read_to_string(&rollout).unwrap(), rollout_text);
+    let db = Connection::open(&new_db).unwrap();
+    assert_eq!(
+        db.query_row(
+            "SELECT recency_at FROM threads WHERE id = 't1'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap(),
+        42
+    );
+}
+
+#[test]
+fn grouped_undo_preflights_all_databases_before_restoring_any() {
+    let tmp = tempdir().unwrap();
+    let first_db = tmp.path().join("first.sqlite");
+    let second_db = tmp.path().join("second.sqlite");
+    let rollout = tmp.path().join("rollout.jsonl");
+    fs::write(&rollout, "{\"type\":\"message\"}\n").unwrap();
+    create_codex_thread_db(&first_db, &rollout);
+    create_codex_thread_db(&second_db, &rollout);
+    let backups = BackupStore::new(tmp.path().join("backups"));
+    let deleted = delete_local_from_paths(
+        vec![first_db.clone(), second_db.clone()],
+        backups.clone(),
+        &session("t1", "Codex Thread"),
+        None,
+    );
+    let token = deleted.undo_token.as_deref().unwrap();
+    Connection::open(&second_db)
+        .unwrap()
+        .execute(
+            "ALTER TABLE threads RENAME COLUMN title TO renamed_title",
+            [],
+        )
+        .unwrap();
+
+    let restored = SQLiteStorageAdapter::new(&first_db, backups)
+        .with_allowed_db_paths(vec![first_db.clone(), second_db.clone()])
+        .undo(token);
+
+    assert_eq!(restored.status, DeleteStatus::Failed);
+    assert!(restored.message.contains("no column named title"));
+    assert_eq!(thread_count(&first_db, "t1"), 0);
+    assert_eq!(thread_count(&second_db, "t1"), 0);
+    assert!(!rollout.exists());
+}
+
+#[test]
+fn undo_rejects_source_database_outside_allowed_paths() {
+    let tmp = tempdir().unwrap();
+    let allowed_dir = tmp.path().join("home").join("sqlite");
+    let outside_dir = tmp.path().join("outside");
+    fs::create_dir_all(&allowed_dir).unwrap();
+    fs::create_dir_all(&outside_dir).unwrap();
+    let allowed_db = allowed_dir.join("codex.sqlite");
+    let outside_db = outside_dir.join("codex.sqlite");
+    create_supported_db(&allowed_db);
+    create_supported_db(&outside_db);
+    let backups = BackupStore::new(tmp.path().join("backups"));
+    let deleted = SQLiteStorageAdapter::new(&outside_db, backups.clone())
+        .delete_local(&session("s1", "First"));
+    let token = deleted.undo_token.as_deref().unwrap();
+
+    let restored = SQLiteStorageAdapter::new(&allowed_db, backups).undo(token);
+
+    assert_eq!(restored.status, DeleteStatus::Failed);
+    assert!(
+        restored
+            .message
+            .contains("not an allowed local storage path")
+    );
+    let outside = Connection::open(&outside_db).unwrap();
+    assert_eq!(
+        outside
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
 fn list_local_sessions_reads_codex_threads_ordered_by_update_time() {
     let tmp = tempdir().unwrap();
     let db_path = tmp.path().join("state_5.sqlite");
@@ -404,6 +914,152 @@ fn list_local_sessions_reads_codex_threads_ordered_by_update_time() {
     assert_eq!(sessions[0].model_provider, "custom");
     assert!(sessions[0].archived);
     assert_eq!(sessions[1].id, "t1");
+    assert_eq!(adapter.list_local_session_ids().unwrap(), ["t1", "t2"]);
+
+    let first_page = adapter.list_local_sessions_limited(1).unwrap();
+    assert_eq!(first_page.len(), 1);
+    assert_eq!(first_page[0].id, "t2");
+}
+
+#[test]
+fn list_local_sessions_hides_spawned_subagent_threads() {
+    let tmp = tempdir().unwrap();
+    let db_path = tmp.path().join("state_5.sqlite");
+    let backup = BackupStore::new(tmp.path().join("backups"));
+    let adapter = SQLiteStorageAdapter::new(&db_path, backup);
+    let db = Connection::open(&db_path).unwrap();
+    db.execute(
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT, cwd TEXT, archived INTEGER, updated_at_ms INTEGER)",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "CREATE TABLE thread_spawn_edges (parent_thread_id TEXT, child_thread_id TEXT)",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO threads VALUES ('parent', 'parent.jsonl', 'Parent', 'C:/a', 0, 100)",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO threads VALUES ('child', 'child.jsonl', 'The following is the Codex agent history', 'C:/a', 0, 200)",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO thread_spawn_edges VALUES ('parent', 'child')",
+        [],
+    )
+    .unwrap();
+    drop(db);
+
+    let sessions = adapter.list_local_sessions().unwrap();
+
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        ["parent"]
+    );
+    assert_eq!(adapter.list_local_session_ids().unwrap(), ["parent"]);
+}
+
+#[test]
+fn list_local_sessions_reads_codex_automation_runs_schema() {
+    let tmp = tempdir().unwrap();
+    let db_path = tmp.path().join("codex-dev.db");
+    let backup = BackupStore::new(tmp.path().join("backups"));
+    let adapter = SQLiteStorageAdapter::new(&db_path, backup);
+    let db = Connection::open(&db_path).unwrap();
+    db.execute(
+        "CREATE TABLE automation_runs (
+            thread_id TEXT PRIMARY KEY,
+            status TEXT,
+            thread_title TEXT,
+            source_cwd TEXT,
+            created_at INTEGER,
+            updated_at INTEGER
+        )",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO automation_runs VALUES ('t1', 'running', 'First', 'C:/a', 100, 200)",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO automation_runs VALUES ('t2', 'archived', 'Second', 'C:/b', 300, 400)",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO automation_runs VALUES ('', 'running', 'No thread', 'C:/c', 500, 600)",
+        [],
+    )
+    .unwrap();
+    drop(db);
+
+    let sessions = adapter.list_local_sessions().unwrap();
+
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0].id, "t2");
+    assert_eq!(sessions[0].title, "Second");
+    assert_eq!(sessions[0].cwd, "C:/b");
+    assert!(sessions[0].archived);
+    assert_eq!(sessions[0].db_path, db_path.to_string_lossy());
+    assert_eq!(sessions[1].id, "t1");
+    assert_eq!(adapter.list_local_session_ids().unwrap(), ["t1", "t2"]);
+}
+
+#[test]
+fn delete_local_session_removes_codex_automation_run_and_inbox_items() {
+    let tmp = tempdir().unwrap();
+    let db_path = tmp.path().join("codex-dev.db");
+    let backup = BackupStore::new(tmp.path().join("backups"));
+    let adapter = SQLiteStorageAdapter::new(&db_path, backup);
+    let db = Connection::open(&db_path).unwrap();
+    db.execute(
+        "CREATE TABLE automation_runs (thread_id TEXT PRIMARY KEY, thread_title TEXT)",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "CREATE TABLE inbox_items (id TEXT PRIMARY KEY, thread_id TEXT, title TEXT)",
+        [],
+    )
+    .unwrap();
+    db.execute("INSERT INTO automation_runs VALUES ('t1', 'First')", [])
+        .unwrap();
+    db.execute("INSERT INTO inbox_items VALUES ('i1', 't1', 'Inbox')", [])
+        .unwrap();
+    drop(db);
+
+    let result = adapter.delete_local(&session("t1", "First"));
+
+    assert_eq!(result.status, DeleteStatus::LocalDeleted);
+    let db = Connection::open(&db_path).unwrap();
+    assert_eq!(
+        db.query_row(
+            "SELECT COUNT(*) FROM automation_runs WHERE thread_id = 't1'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT COUNT(*) FROM inbox_items WHERE thread_id = 't1'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -524,7 +1180,7 @@ fn missing_db_and_unsupported_schema_return_failed_results() {
 }
 
 #[test]
-fn archived_lookup_workspace_move_and_sort_keys_match_expected_shape() {
+fn archived_lookup_matches_expected_shape() {
     let tmp = tempdir().unwrap();
     let db_path = tmp.path().join("state_5.sqlite");
     let rollout_path = tmp.path().join("rollout.jsonl");
@@ -549,32 +1205,77 @@ fn archived_lookup_workspace_move_and_sort_keys_match_expected_shape() {
         Some(session("t1", "Codex Thread"))
     );
 
-    let moved =
-        adapter.move_codex_thread_workspace(&session("local:t1", "Codex Thread"), "/new/project");
-    assert_eq!(moved["status"], "moved");
-    assert_eq!(moved["previous_cwd"], "/old/project");
-    assert_eq!(moved["target_cwd"], "/new/project");
-    assert_eq!(moved["rollout_updated"], true);
-    assert_eq!(moved["updated_at"], 100);
-    assert_eq!(moved["updated_at_ms"], 100000);
-    let text = fs::read_to_string(&rollout_path).unwrap();
-    assert!(text.contains("\"id\":\"t1\",\"cwd\":\"/new/project\""));
-    assert!(text.contains("\"id\":\"other\",\"cwd\":\"/old/project\""));
-
     assert_eq!(
-        adapter.codex_thread_sort_key(&session("local:t1", "Codex Thread")),
-        json!({"status": "ok", "session_id": "t1", "updated_at": 100, "updated_at_ms": 100000, "created_at_ms": null})
-    );
-    assert_eq!(
-        adapter.codex_thread_sort_keys(&[
-            session("local:t2", "Second"),
-            session("local:t1", "Codex Thread")
-        ]),
+        adapter.codex_thread_usage_history(&session("local:t1", "Codex Thread")),
         json!({
             "status": "ok",
-            "sort_keys": [
-                {"session_id": "t2", "updated_at": 200, "updated_at_ms": 200000, "created_at_ms": null},
-                {"session_id": "t1", "updated_at": 100, "updated_at_ms": 100000, "created_at_ms": null}
+            "session_id": "t1",
+            "rollout_path": rollout_path.to_string_lossy().to_string(),
+            "history": []
+        })
+    );
+}
+
+#[test]
+fn thread_usage_history_reads_rollout_token_count_events() {
+    let tmp = tempdir().unwrap();
+    let db_path = tmp.path().join("state_5.sqlite");
+    let rollout_path = tmp.path().join("rollout.jsonl");
+    fs::write(
+        &rollout_path,
+        concat!(
+            "{\"type\":\"turn_context\",\"payload\":{\"turn_id\":\"turn-1\"}}\n",
+            "{\"timestamp\":\"2026-06-02T05:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":5000,\"cached_input_tokens\":1500,\"output_tokens\":500,\"total_tokens\":5500},\"last_token_usage\":{\"input_tokens\":1200,\"cached_input_tokens\":900,\"output_tokens\":120,\"total_tokens\":1320},\"model_context_window\":258400}}}\n",
+            "{\"timestamp\":\"2026-06-02T05:00:01Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"agent_message\",\"message\":\"ignore\"}}\n",
+            "{\"type\":\"turn_context\",\"payload\":{\"turn_id\":\"turn-2\"}}\n",
+            "{\"timestamp\":\"2026-06-02T05:01:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":7000,\"cached_input_tokens\":2500,\"output_tokens\":750,\"total_tokens\":7750},\"last_token_usage\":{\"input_tokens\":2000,\"cached_input_tokens\":1200,\"output_tokens\":250,\"total_tokens\":2250},\"model_context_window\":258400}}}\n"
+        ),
+    )
+    .unwrap();
+    create_codex_thread_db(&db_path, &rollout_path);
+    let adapter = SQLiteStorageAdapter::new(&db_path, BackupStore::new(tmp.path().join("backups")));
+
+    assert_eq!(
+        adapter.codex_thread_usage_history(&session("local:t1", "Codex Thread")),
+        json!({
+            "status": "ok",
+            "session_id": "t1",
+            "rollout_path": rollout_path.to_string_lossy().to_string(),
+            "history": [
+                {
+                    "source": "rollout-history",
+                    "conversation_id": "local:t1",
+                    "turn_id": "turn-1",
+                    "observed_at": "2026-06-02T05:00:00Z",
+                    "usage": {
+                        "inputTokens": 1200,
+                        "outputTokens": 120,
+                        "totalTokens": 1320,
+                        "cachedTokens": 900,
+                        "cacheReadTokens": 0,
+                        "cacheCreationTokens": 0,
+                        "contextUsed": 5500,
+                        "contextLimit": 258400,
+                        "hasBreakdown": true
+                    }
+                },
+                {
+                    "source": "rollout-history",
+                    "conversation_id": "local:t1",
+                    "turn_id": "turn-2",
+                    "observed_at": "2026-06-02T05:01:00Z",
+                    "usage": {
+                        "inputTokens": 2000,
+                        "outputTokens": 250,
+                        "totalTokens": 2250,
+                        "cachedTokens": 1200,
+                        "cacheReadTokens": 0,
+                        "cacheCreationTokens": 0,
+                        "contextUsed": 7750,
+                        "contextLimit": 258400,
+                        "hasBreakdown": true
+                    }
+                }
             ]
         })
     );

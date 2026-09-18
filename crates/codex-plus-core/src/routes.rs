@@ -1,8 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Value, json};
 
 use crate::models::{DeleteResult, DeleteStatus, ExportResult, ExportStatus, SessionRef};
@@ -43,33 +45,74 @@ impl BridgeContext {
     ) -> Self {
         Self::new(Arc::new(CoreSettingsService::default()), runtime, data)
     }
+
+    pub fn core_with_data_and_app_dir(
+        runtime: Arc<dyn BridgeRuntimeService>,
+        data: Arc<dyn BridgeDataService>,
+        app_dir: PathBuf,
+    ) -> Self {
+        Self::new(
+            Arc::new(CoreSettingsService::with_app_dir(app_dir)),
+            runtime,
+            data,
+        )
+    }
 }
 
 #[async_trait]
 pub trait BridgeSettingsService: Send + Sync {
     async fn get_settings(&self) -> anyhow::Result<BackendSettings>;
     async fn set_settings(&self, payload: Value) -> anyhow::Result<BackendSettings>;
-    async fn saved_accounts(&self) -> anyhow::Result<Value>;
-    async fn switch_saved_account(&self, profile_id: String) -> anyhow::Result<Value>;
+
+    /// Return the saved relay profiles in a bridge-friendly shape.
+    ///
+    /// Implementations that only expose the regular settings store get this
+    /// read-only view for free; the core implementation overrides switching
+    /// below because applying a profile also touches the live Codex files.
+    async fn saved_accounts(&self) -> anyhow::Result<Value> {
+        Ok(saved_accounts_value(&self.get_settings().await?))
+    }
+
+    async fn switch_saved_account(&self, _profile_id: String) -> anyhow::Result<Value> {
+        anyhow::bail!("Saved account switching is unavailable")
+    }
+
+    async fn codex_app_version(&self) -> anyhow::Result<String> {
+        Ok(String::new())
+    }
 }
 
 #[async_trait]
 pub trait BridgeRuntimeService: Send + Sync {
     async fn user_script_inventory(&self) -> anyhow::Result<Value>;
+    async fn user_script_inventory_with_runtime_status(
+        &self,
+        _payload: Value,
+    ) -> anyhow::Result<Value> {
+        self.user_script_inventory().await
+    }
     async fn set_user_scripts_enabled(&self, enabled: bool) -> anyhow::Result<Value>;
     async fn set_user_script_enabled(&self, key: String, enabled: bool) -> anyhow::Result<Value>;
     async fn delete_user_script(&self, key: String) -> anyhow::Result<Value>;
     async fn reload_user_scripts(&self) -> anyhow::Result<Value>;
     async fn open_devtools(&self) -> anyhow::Result<Value>;
-    async fn open_manager(&self) -> anyhow::Result<Value>;
+    async fn open_manager(&self, payload: Value) -> anyhow::Result<Value>;
+    async fn open_transient_manager(&self, payload: Value) -> anyhow::Result<Value> {
+        self.open_manager(payload).await
+    }
     async fn backend_status(&self) -> anyhow::Result<Value>;
-    async fn repair_backend(&self) -> anyhow::Result<Value>;
     async fn codex_model_catalog(&self) -> anyhow::Result<Value>;
     async fn ads(&self) -> anyhow::Result<Value>;
+    async fn create_share(&self, payload: Value) -> anyhow::Result<Value> {
+        crate::share::create_share(payload).await
+    }
     async fn zed_remote_status(&self) -> anyhow::Result<Value>;
     async fn resolve_zed_remote_host(&self, payload: Value) -> anyhow::Result<Value>;
     async fn fallback_zed_remote_request(&self, payload: Value) -> anyhow::Result<Value>;
     async fn open_zed_remote(&self, payload: Value) -> anyhow::Result<Value>;
+    async fn list_zed_remote_projects(&self, payload: Value) -> anyhow::Result<Value>;
+    async fn remember_zed_remote_project(&self, payload: Value) -> anyhow::Result<Value>;
+    async fn forget_zed_remote_project(&self, payload: Value) -> anyhow::Result<Value>;
     async fn upstream_worktree_status(&self) -> anyhow::Result<Value>;
     async fn upstream_worktree_defaults(&self, payload: Value) -> anyhow::Result<Value>;
     async fn upstream_worktree_prepare(&self, payload: Value) -> anyhow::Result<Value>;
@@ -81,17 +124,20 @@ pub trait BridgeDataService: Send + Sync {
     async fn delete(&self, session: SessionRef) -> anyhow::Result<DeleteResult>;
     async fn undo(&self, undo_token: String) -> anyhow::Result<DeleteResult>;
     async fn export_markdown(&self, session: SessionRef) -> anyhow::Result<ExportResult>;
+    async fn thread_usage_history(&self, session: SessionRef) -> anyhow::Result<Value>;
     async fn find_archived_thread_by_title(
         &self,
         title: String,
     ) -> anyhow::Result<Option<SessionRef>>;
-    async fn move_thread_workspace(
-        &self,
-        session: SessionRef,
-        target_cwd: String,
-    ) -> anyhow::Result<Value>;
-    async fn thread_sort_key(&self, session: SessionRef) -> anyhow::Result<Value>;
-    async fn thread_sort_keys(&self, sessions: Vec<SessionRef>) -> anyhow::Result<Value>;
+    async fn recover_remote_control_session(&self, _thread_id: String) -> anyhow::Result<Value> {
+        anyhow::bail!("Remote Control session recovery is unavailable")
+    }
+    async fn export_session_file(&self, _session: SessionRef) -> anyhow::Result<Value> {
+        anyhow::bail!("Session file export is unavailable")
+    }
+    async fn import_session_file(&self, _payload: Value) -> anyhow::Result<Value> {
+        anyhow::bail!("Session file import is unavailable")
+    }
 }
 
 pub async fn handle_bridge_request(
@@ -111,8 +157,10 @@ pub async fn handle_bridge_request(
         }),
     );
     let result = match path {
-        "/settings/get" => settings_value(ctx.settings.get_settings().await),
-        "/settings/set" => settings_value(ctx.settings.set_settings(payload.clone()).await),
+        "/settings/get" => settings_value(&ctx, ctx.settings.get_settings().await).await,
+        "/settings/set" => {
+            settings_value(&ctx, ctx.settings.set_settings(payload.clone()).await).await
+        }
         "/accounts/list" => ctx.settings.saved_accounts().await,
         "/accounts/switch" => {
             let profile_id = payload
@@ -122,7 +170,11 @@ pub async fn handle_bridge_request(
                 .to_string();
             ctx.settings.switch_saved_account(profile_id).await
         }
-        "/user-scripts/list" => ctx.runtime.user_script_inventory().await,
+        "/user-scripts/list" => {
+            ctx.runtime
+                .user_script_inventory_with_runtime_status(payload.clone())
+                .await
+        }
         "/user-scripts/set-enabled" => {
             let enabled = payload
                 .get("enabled")
@@ -152,12 +204,17 @@ pub async fn handle_bridge_request(
         }
         "/user-scripts/reload" => ctx.runtime.reload_user_scripts().await,
         "/devtools/open" => ctx.runtime.open_devtools().await,
-        "/manager/open" => ctx.runtime.open_manager().await,
-        "/backend/status" => ctx.runtime.backend_status().await,
-        "/backend/repair" => ctx.runtime.repair_backend().await,
+        "/manager/open" => ctx.runtime.open_manager(payload.clone()).await,
+        "/manager/open-transient" => ctx.runtime.open_transient_manager(payload.clone()).await,
+        "/backend/status" => backend_status_value(
+            ctx.runtime.backend_status().await,
+            ctx.settings.get_settings().await,
+        ),
         "/codex-model-catalog" | "/codex-config-model" => ctx.runtime.codex_model_catalog().await,
         "/diagnostics/log" => diagnostic_log_value(payload.clone()),
+        "/llm-proxy" => llm_proxy_value(payload.clone()).await,
         "/ads" => ctx.runtime.ads().await,
+        "/share/create" => ctx.runtime.create_share(payload.clone()).await,
         "/zed-remote/status" => ctx.runtime.zed_remote_status().await,
         "/zed-remote/resolve-host" => ctx.runtime.resolve_zed_remote_host(payload.clone()).await,
         "/zed-remote/fallback-request" => {
@@ -166,6 +223,15 @@ pub async fn handle_bridge_request(
                 .await
         }
         "/zed-remote/open" => ctx.runtime.open_zed_remote(payload.clone()).await,
+        "/zed-remote/projects" => ctx.runtime.list_zed_remote_projects(payload.clone()).await,
+        "/zed-remote/remember-project" => {
+            ctx.runtime
+                .remember_zed_remote_project(payload.clone())
+                .await
+        }
+        "/zed-remote/forget-project" => {
+            ctx.runtime.forget_zed_remote_project(payload.clone()).await
+        }
         "/upstream-worktree/status" => ctx.runtime.upstream_worktree_status().await,
         "/upstream-worktree/defaults" => {
             ctx.runtime
@@ -176,6 +242,13 @@ pub async fn handle_bridge_request(
             ctx.runtime.upstream_worktree_prepare(payload.clone()).await
         }
         "/upstream-worktree/create" => ctx.runtime.upstream_worktree_create(payload.clone()).await,
+        "/stepwise/settings" => stepwise_settings_value(ctx.settings.get_settings().await),
+        "/stepwise/generate" => {
+            stepwise_generate_value(ctx.settings.get_settings().await, payload.clone()).await
+        }
+        "/stepwise/test" => {
+            stepwise_test_value(ctx.settings.get_settings().await, payload.clone()).await
+        }
         "/delete" => result_value(ctx.data.delete(session_from_payload(&payload)).await),
         "/undo" => {
             let undo_token = payload
@@ -190,6 +263,11 @@ pub async fn handle_bridge_request(
                 .export_markdown(session_from_payload(&payload))
                 .await,
         ),
+        "/thread-usage-history" => {
+            ctx.data
+                .thread_usage_history(session_from_payload(&payload))
+                .await
+        }
         "/archived-thread" => {
             let title = payload
                 .get("title")
@@ -198,26 +276,20 @@ pub async fn handle_bridge_request(
                 .to_string();
             archived_thread_value(ctx.data.find_archived_thread_by_title(title).await)
         }
-        "/move-thread-workspace" => {
-            let target_cwd = payload
-                .get("target_cwd")
+        "/remote-control-session/recover" => {
+            let thread_id = payload
+                .get("thread_id")
+                .or_else(|| payload.get("threadId"))
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            ctx.data
-                .move_thread_workspace(session_from_payload(&payload), target_cwd)
-                .await
+            ctx.data.recover_remote_control_session(thread_id).await
         }
-        "/thread-sort-key" => {
-            ctx.data
-                .thread_sort_key(session_from_payload(&payload))
-                .await
-        }
-        "/thread-sort-keys" => {
-            ctx.data
-                .thread_sort_keys(sessions_from_payload(&payload))
-                .await
-        }
+        "/session/export" => ctx
+            .data
+            .export_session_file(session_from_payload(&payload))
+            .await,
+        "/session/import" => ctx.data.import_session_file(payload.clone()).await,
         _ => {
             let _ = crate::diagnostic_log::append_diagnostic_log(
                 "bridge.unknown_path",
@@ -248,6 +320,16 @@ pub async fn handle_bridge_request(
 #[derive(Default)]
 pub struct CoreSettingsService {
     store: SettingsStore,
+    app_dir: Option<PathBuf>,
+}
+
+impl CoreSettingsService {
+    fn with_app_dir(app_dir: PathBuf) -> Self {
+        Self {
+            store: SettingsStore::default(),
+            app_dir: Some(app_dir),
+        }
+    }
 }
 
 #[async_trait]
@@ -267,13 +349,27 @@ impl BridgeSettingsService for CoreSettingsService {
     async fn switch_saved_account(&self, profile_id: String) -> anyhow::Result<Value> {
         switch_saved_account_with_store(&self.store, &profile_id)
     }
+
+    async fn codex_app_version(&self) -> anyhow::Result<String> {
+        if let Some(app_dir) = self.app_dir.as_deref() {
+            return Ok(crate::app_paths::codex_app_version(app_dir).unwrap_or_default());
+        }
+        let settings = self.store.load().unwrap_or_default();
+        let app_dir = crate::app_paths::resolve_codex_app_dir_with_saved(
+            None,
+            Some(settings.codex_app_path.as_str()),
+        );
+        Ok(app_dir
+            .as_deref()
+            .and_then(crate::app_paths::codex_app_version)
+            .unwrap_or_default())
+    }
 }
 
 fn saved_accounts_value(settings: &BackendSettings) -> Value {
-    let active_id = settings.active_relay_id.clone();
     json!({
         "status": "ok",
-        "activeProfileId": active_id,
+        "activeProfileId": settings.active_relay_id,
         "accounts": settings.relay_profiles.iter().map(|profile| json!({
             "id": profile.id,
             "name": profile.name,
@@ -282,14 +378,17 @@ fn saved_accounts_value(settings: &BackendSettings) -> Value {
             "active": profile.id == settings.active_relay_id,
             "hasConfig": !profile.config_contents.trim().is_empty(),
             "hasAuth": !profile.auth_contents.trim().is_empty(),
-        })).collect::<Vec<_>>()
+        })).collect::<Vec<_>>(),
     })
 }
 
-fn switch_saved_account_with_store(store: &SettingsStore, profile_id: &str) -> anyhow::Result<Value> {
+fn switch_saved_account_with_store(
+    store: &SettingsStore,
+    profile_id: &str,
+) -> anyhow::Result<Value> {
     let profile_id = profile_id.trim();
     if profile_id.is_empty() {
-        anyhow::bail!("Thieu tai khoan can chuyen");
+        anyhow::bail!("No saved account was selected")
     }
 
     let home = crate::relay_config::default_codex_home_dir();
@@ -299,45 +398,50 @@ fn switch_saved_account_with_store(store: &SettingsStore, profile_id: &str) -> a
         .relay_profiles
         .iter()
         .position(|profile| profile.id == current_id);
-
     let target_index = settings
         .relay_profiles
         .iter()
         .position(|profile| profile.id == profile_id)
-        .ok_or_else(|| anyhow::anyhow!("Khong tim thay tai khoan da luu: {profile_id}"))?;
+        .ok_or_else(|| anyhow::anyhow!("Saved account not found: {profile_id}"))?;
 
-    // Backfill target profile from .codex if it has no saved config
-    // This handles the case where user logged into .codex directly without switching first
-    if settings.relay_profiles[target_index].config_contents.is_empty()
-        || settings.relay_profiles[target_index].auth_contents.is_empty()
+    // A profile created before a direct Codex login may not have a local copy
+    // yet. Capture the live files before applying the target profile.
+    if settings.relay_profiles[target_index]
+        .config_contents
+        .trim()
+        .is_empty()
+        || settings.relay_profiles[target_index]
+            .auth_contents
+            .trim()
+            .is_empty()
     {
         let mut common_config = relay_combined_common_config(&settings);
-        if let Err(_error) = crate::relay_config::backfill_relay_profile_from_home_with_common(
+        if crate::relay_config::backfill_relay_profile_from_home_with_common(
             &home,
             &mut settings.relay_profiles[target_index],
             &mut common_config,
-        ) {
-            // Skip backfill silently - profile might have partial saved config
-        } else {
+        )
+        .is_ok()
+        {
             settings.relay_common_config_contents = common_config;
         }
     }
 
-    if let Some(index) = current_index.filter(|index| settings.relay_profiles[*index].id != profile_id) {
+    if let Some(index) =
+        current_index.filter(|index| settings.relay_profiles[*index].id != profile_id)
+    {
         let mut common_config = relay_combined_common_config(&settings);
         crate::relay_config::backfill_relay_profile_from_home_with_common(
             &home,
             &mut settings.relay_profiles[index],
             &mut common_config,
-        )
-        .map_err(|error| anyhow::anyhow!("Doc tai khoan hien tai that bai: {error}"))?;
+        )?;
         settings.relay_common_config_contents = common_config;
         settings.relay_context_config_contents.clear();
     }
 
     let target = settings.relay_profiles[target_index].clone();
     validate_saved_account_for_switch(&target)?;
-
     settings.active_relay_id = target.id.clone();
     settings.launch_mode = if target.relay_mode == RelayMode::PureApi {
         LaunchMode::Patch
@@ -347,50 +451,48 @@ fn switch_saved_account_with_store(store: &SettingsStore, profile_id: &str) -> a
     store.save(&settings)?;
 
     let common_config = relay_combined_common_config(&settings);
-    let result =
-        crate::relay_config::apply_relay_profile_to_home_with_switch_rules(&home, &target, &common_config)
-            .map_err(|error| anyhow::anyhow!("Chuyen tai khoan that bai: {error}"))?;
-
+    let result = crate::relay_config::apply_relay_profile_to_home_with_switch_rules(
+        &home,
+        &target,
+        &common_config,
+    )?;
     if target.relay_mode == RelayMode::PureApi && !result.configured {
-        anyhow::bail!(
-            "Pure API chua san sang sau khi ghi config.toml / auth.json. Hay kiem tra lai tai khoan da luu."
-        );
+        anyhow::bail!("Pure API profile was not configured after switching")
     }
 
     Ok(json!({
         "status": "ok",
-        "message": "Da chuyen tai khoan. Khoi dong lai Codex neu phien hien tai chua doi ngay.",
+        "message": "Saved account switched successfully",
         "activeProfileId": target.id,
         "activeProfileName": target.name,
         "backupPath": result.backup_path,
         "settings": settings,
-        "accounts": saved_accounts_value(&settings)["accounts"].clone()
+        "accounts": saved_accounts_value(&settings)["accounts"].clone(),
     }))
 }
 
-fn validate_saved_account_for_switch(profile: &crate::settings::RelayProfile) -> anyhow::Result<()> {
+fn validate_saved_account_for_switch(
+    profile: &crate::settings::RelayProfile,
+) -> anyhow::Result<()> {
     if profile.config_contents.trim().is_empty() {
-        anyhow::bail!(
-            "Tai khoan \"{}\" dang thieu config.toml rieng. Hay luu tai khoan trong Manager truoc khi chuyen.",
-            profile.name
-        );
+        anyhow::bail!("Saved account is missing its own config.toml")
     }
     if profile.auth_contents.trim().is_empty() {
-        anyhow::bail!(
-            "Tai khoan \"{}\" dang thieu auth.json rieng. Hay dang nhap va luu tai khoan trong Manager truoc khi chuyen.",
-            profile.name
-        );
+        anyhow::bail!("Saved account is missing its own auth.json")
     }
     Ok(())
 }
 
 fn relay_combined_common_config(settings: &BackendSettings) -> String {
-    [settings.relay_common_config_contents.as_str(), settings.relay_context_config_contents.as_str()]
-        .into_iter()
-        .map(str::trim)
-        .filter(|section| !section.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    [
+        settings.relay_common_config_contents.as_str(),
+        settings.relay_context_config_contents.as_str(),
+    ]
+    .into_iter()
+    .map(str::trim)
+    .filter(|section| !section.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
 }
 
 #[derive(Clone)]
@@ -516,15 +618,39 @@ impl BridgeRuntimeService for CoreRuntimeService {
         }))
     }
 
-    async fn open_manager(&self) -> anyhow::Result<Value> {
-        let manager_path = manager_exe_path();
-        if !manager_path.exists() {
-            anyhow::bail!("未找到管理工具：{}", manager_path.display());
-        }
-        spawn_manager(&manager_path)?;
+    async fn open_manager(&self, payload: Value) -> anyhow::Result<Value> {
+        let navigation =
+            crate::manager_navigation::save_pending_manager_navigation_from_payload(&payload)?;
+        let target = crate::install::open_or_activate_manager().map_err(|error| {
+            crate::manager_navigation::rollback_pending_manager_navigation_after_launch_failure(
+                navigation.as_ref(),
+                error,
+            )
+        })?;
         Ok(json!({
             "status": "ok",
-            "path": manager_path.to_string_lossy()
+            "path": target,
+            "navigation": navigation
+        }))
+    }
+
+    async fn open_transient_manager(&self, payload: Value) -> anyhow::Result<Value> {
+        let navigation =
+            crate::manager_navigation::save_pending_manager_navigation_from_payload(&payload)?;
+        let target = crate::install::spawn_companion(
+            crate::install::MANAGER_BINARY,
+            ["--transient"],
+        )
+        .map_err(|error| {
+            crate::manager_navigation::rollback_pending_manager_navigation_after_launch_failure(
+                navigation.as_ref(),
+                error,
+            )
+        })?;
+        Ok(json!({
+            "status": "ok",
+            "path": target,
+            "navigation": navigation
         }))
     }
 
@@ -538,10 +664,6 @@ impl BridgeRuntimeService for CoreRuntimeService {
             }),
         );
         Ok(json!({"status": "ok", "message": "后端已连接", "version": crate::version::VERSION}))
-    }
-
-    async fn repair_backend(&self) -> anyhow::Result<Value> {
-        self.backend_status().await
     }
 
     async fn codex_model_catalog(&self) -> anyhow::Result<Value> {
@@ -566,6 +688,24 @@ impl BridgeRuntimeService for CoreRuntimeService {
 
     async fn open_zed_remote(&self, payload: Value) -> anyhow::Result<Value> {
         Ok(crate::zed_remote::open_zed_remote(&payload))
+    }
+
+    async fn list_zed_remote_projects(&self, payload: Value) -> anyhow::Result<Value> {
+        Ok(crate::zed_remote::list_zed_remote_projects_response(
+            &payload,
+        ))
+    }
+
+    async fn remember_zed_remote_project(&self, payload: Value) -> anyhow::Result<Value> {
+        Ok(crate::zed_remote::remember_zed_remote_project_response(
+            &payload,
+        ))
+    }
+
+    async fn forget_zed_remote_project(&self, payload: Value) -> anyhow::Result<Value> {
+        Ok(crate::zed_remote::forget_zed_remote_project_response(
+            &payload,
+        ))
     }
 
     async fn upstream_worktree_status(&self) -> anyhow::Result<Value> {
@@ -619,61 +759,72 @@ impl BridgeDataService for UnavailableDataService {
         })
     }
 
+    async fn thread_usage_history(&self, session: SessionRef) -> anyhow::Result<Value> {
+        Ok(json!({
+            "status": "failed",
+            "session_id": session.session_id,
+            "message": "Thread usage history service is not wired in core launcher hooks",
+            "history": []
+        }))
+    }
+
     async fn find_archived_thread_by_title(
         &self,
         _title: String,
     ) -> anyhow::Result<Option<SessionRef>> {
         Ok(None)
     }
-
-    async fn move_thread_workspace(
-        &self,
-        session: SessionRef,
-        _target_cwd: String,
-    ) -> anyhow::Result<Value> {
-        Ok(json!({
-            "status": "failed",
-            "session_id": session.session_id,
-            "message": "Move workspace service is not wired in core launcher hooks"
-        }))
-    }
-
-    async fn thread_sort_key(&self, session: SessionRef) -> anyhow::Result<Value> {
-        Ok(json!({
-            "status": "failed",
-            "session_id": session.session_id,
-            "message": "Thread sort service is not wired in core launcher hooks"
-        }))
-    }
-
-    async fn thread_sort_keys(&self, _sessions: Vec<SessionRef>) -> anyhow::Result<Value> {
-        Ok(json!({
-            "status": "failed",
-            "message": "Thread sort service is not wired in core launcher hooks",
-            "sort_keys": []
-        }))
-    }
 }
 
-fn manager_exe_path() -> PathBuf {
-    crate::install::option_or_current_exe(&None, crate::install::MANAGER_BINARY)
-}
-
-fn spawn_manager(manager_path: &Path) -> anyhow::Result<()> {
-    let mut command = std::process::Command::new(manager_path);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(crate::windows_create_no_window());
+fn settings_payload_value(
+    settings: BackendSettings,
+    codex_app_version: String,
+) -> anyhow::Result<Value> {
+    let active_relay_session_provider = settings.active_relay_session_provider();
+    let active_relay_codex_provider = crate::model_catalog::codex_model_provider_for_relay_profile(
+        &crate::relay_config::default_codex_home_dir(),
+        &settings.active_relay_profile(),
+    );
+    let mut value = serde_json::to_value(settings)?;
+    if let Some(object) = value.as_object_mut() {
+        object.remove("codexAppStepwiseApiKey");
+        object.insert(
+            "activeRelaySessionProvider".to_string(),
+            Value::String(active_relay_session_provider.as_str().to_string()),
+        );
+        object.insert(
+            "activeRelayCodexProvider".to_string(),
+            Value::String(active_relay_codex_provider),
+        );
+        object.insert(
+            "codexAppVersion".to_string(),
+            Value::String(codex_app_version),
+        );
     }
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| anyhow::anyhow!("启动管理工具失败：{error}"))
+    Ok(value)
 }
 
-fn settings_value(result: anyhow::Result<BackendSettings>) -> anyhow::Result<Value> {
-    Ok(serde_json::to_value(result?)?)
+async fn settings_value(
+    ctx: &BridgeContext,
+    result: anyhow::Result<BackendSettings>,
+) -> anyhow::Result<Value> {
+    let settings = result?;
+    let codex_app_version = ctx.settings.codex_app_version().await.unwrap_or_default();
+    settings_payload_value(settings, codex_app_version)
+}
+
+fn backend_status_value(
+    status: anyhow::Result<Value>,
+    settings: anyhow::Result<BackendSettings>,
+) -> anyhow::Result<Value> {
+    let mut status = status?;
+    if let Some(object) = status.as_object_mut() {
+        let hide = settings
+            .map(|settings| crate::assets::hide_official_usage_alert_config(&settings))
+            .unwrap_or(false);
+        object.insert("hideOfficialUsageAlert".to_string(), Value::Bool(hide));
+    }
+    Ok(status)
 }
 
 fn result_value<T>(result: anyhow::Result<T>) -> anyhow::Result<Value>
@@ -681,6 +832,200 @@ where
     T: serde::Serialize,
 {
     Ok(serde_json::to_value(result?)?)
+}
+
+fn stepwise_settings_value(result: anyhow::Result<BackendSettings>) -> anyhow::Result<Value> {
+    let settings = result?;
+    Ok(json!({
+        "status": "ok",
+        "settings": crate::stepwise::public_settings(&settings),
+    }))
+}
+
+async fn stepwise_generate_value(
+    result: anyhow::Result<BackendSettings>,
+    payload: Value,
+) -> anyhow::Result<Value> {
+    let settings = result?;
+    let request = payload.get("request").cloned().unwrap_or(payload);
+    let request =
+        serde_json::from_value::<crate::stepwise::StepwiseRequest>(request).unwrap_or_default();
+    crate::stepwise::generate(request, &settings).await
+}
+
+async fn stepwise_test_value(
+    result: anyhow::Result<BackendSettings>,
+    payload: Value,
+) -> anyhow::Result<Value> {
+    let settings = crate::stepwise::settings_with_payload(result?, &payload);
+    crate::stepwise::test_connection(&settings).await
+}
+
+async fn llm_proxy_value(payload: Value) -> anyhow::Result<Value> {
+    let url = validate_llm_proxy_url(
+        payload
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )?;
+    let method = payload
+        .get("method")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("POST");
+    if !method.eq_ignore_ascii_case("POST") {
+        anyhow::bail!("LLM Bridge 仅支持 POST 请求");
+    }
+
+    let timeout_ms = payload
+        .get("timeout_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(60_000)
+        .clamp(1_000, 60_000);
+    let body = payload
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if body.len() > 1_048_576 {
+        anyhow::bail!("LLM Bridge 请求体过大");
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let response = client
+        .post(url)
+        .headers(llm_proxy_headers(&payload)?)
+        .body(body)
+        .send()
+        .await?;
+    let http_status = response.status().as_u16();
+    let ok = response.status().is_success();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    if let Some(length) = response.content_length() {
+        if length > 4 * 1024 * 1024 {
+            anyhow::bail!("LLM Bridge 响应体过大");
+        }
+    }
+    let bytes = response.bytes().await?;
+    if bytes.len() > 4 * 1024 * 1024 {
+        anyhow::bail!("LLM Bridge 响应体过大");
+    }
+    let body_text = String::from_utf8_lossy(&bytes).to_string();
+    let body_json = if content_type
+        .split(';')
+        .next()
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("application/json"))
+    {
+        serde_json::from_slice::<Value>(&bytes).ok()
+    } else {
+        None
+    };
+
+    Ok(json!({
+        "status": "ok",
+        "http_status": http_status,
+        "ok": ok,
+        "body_text": body_text,
+        "body_json": body_json,
+    }))
+}
+
+fn validate_llm_proxy_url(raw: &str) -> anyhow::Result<reqwest::Url> {
+    let url = reqwest::Url::parse(raw.trim()).map_err(|_| anyhow::anyhow!("Base URL 格式无效"))?;
+    if url.scheme() != "https" {
+        anyhow::bail!("Base URL 必须使用 HTTPS");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        anyhow::bail!("Base URL 不得包含用户名或密码");
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("Base URL 缺少主机名"))?;
+    if is_blocked_llm_proxy_host(host) {
+        anyhow::bail!("Base URL 不得指向本机或私有网络");
+    }
+    Ok(url)
+}
+
+fn is_blocked_llm_proxy_host(host: &str) -> bool {
+    let host = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_lowercase();
+    if host.is_empty()
+        || host == "localhost"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+    {
+        return true;
+    }
+    if let Ok(ip) = std::net::IpAddr::from_str(&host) {
+        return match ip {
+            std::net::IpAddr::V4(ip) => {
+                ip.is_loopback()
+                    || ip.is_private()
+                    || ip.is_link_local()
+                    || ip.is_multicast()
+                    || ip.is_broadcast()
+                    || ip.is_documentation()
+                    || ip.octets()[0] == 0
+                    || ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1])
+            }
+            std::net::IpAddr::V6(ip) => {
+                ip.is_loopback()
+                    || ip.is_unspecified()
+                    || ip.is_multicast()
+                    || (ip.segments()[0] & 0xfe00) == 0xfc00
+                    || (ip.segments()[0] & 0xffc0) == 0xfe80
+            }
+        };
+    }
+    false
+}
+
+fn llm_proxy_headers(payload: &Value) -> anyhow::Result<HeaderMap> {
+    let mut headers = HeaderMap::new();
+    let Some(raw_headers) = payload.get("headers").and_then(Value::as_object) else {
+        return Ok(headers);
+    };
+    for (name, value) in raw_headers {
+        if !is_allowed_llm_proxy_header(name) {
+            continue;
+        }
+        let Some(value) = value.as_str() else {
+            continue;
+        };
+        let header_name = HeaderName::from_bytes(name.as_bytes())?;
+        let header_value = HeaderValue::from_str(value)?;
+        headers.insert(header_name, header_value);
+    }
+    Ok(headers)
+}
+
+fn is_allowed_llm_proxy_header(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "accept"
+            | "api-key"
+            | "anthropic-beta"
+            | "anthropic-version"
+            | "authorization"
+            | "content-type"
+            | "openai-organization"
+            | "openai-project"
+            | "x-api-key"
+    )
 }
 
 fn diagnostic_log_value(payload: Value) -> anyhow::Result<Value> {
@@ -745,31 +1090,6 @@ fn session_from_payload(payload: &Value) -> SessionRef {
             .unwrap_or_default()
             .to_string(),
     }
-}
-
-fn sessions_from_payload(payload: &Value) -> Vec<SessionRef> {
-    payload
-        .get("sessions")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_object())
-                .map(|item| SessionRef {
-                    session_id: item
-                        .get("session_id")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                    title: item
-                        .get("title")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 pub fn devtools_url(debug_port: u16, target_id: &str) -> String {

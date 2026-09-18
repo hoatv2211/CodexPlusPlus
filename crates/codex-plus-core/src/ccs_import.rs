@@ -1,9 +1,8 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
-use rusqlite::{Connection, params};
-use serde_json::{Value, json};
+use anyhow::{Context, anyhow};
+use rusqlite::Connection;
+use serde_json::Value;
 
 use crate::settings::{RelayMode, RelayProfile, RelayProtocol};
 
@@ -19,156 +18,75 @@ pub struct CcsProviderImport {
     pub auth_contents: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CcsProviderSource {
+    pub configured_db_path: String,
+    pub db_path: PathBuf,
+    pub fallback_reason: Option<String>,
+    pub providers: Vec<CcsProviderImport>,
+}
+
 pub fn default_ccs_db_path() -> PathBuf {
     home_dir()
         .join(format!(".{}-{}", "cc", "switch"))
         .join(format!("{}-{}.db", "cc", "switch"))
 }
 
-pub fn default_ccs_settings_path() -> PathBuf {
-    home_dir()
-        .join(format!(".{}-{}", "cc", "switch"))
-        .join("settings.json")
-}
-
 pub fn list_codex_providers_from_default_db() -> anyhow::Result<Vec<CcsProviderImport>> {
     list_codex_providers_from_db(&default_ccs_db_path())
 }
 
-pub fn sync_linked_profiles_from_default_db(
-    profiles: &mut Vec<RelayProfile>,
-) -> anyhow::Result<usize> {
-    sync_linked_profiles_from_db(&default_ccs_db_path(), profiles)
+pub fn resolve_codex_provider_source(
+    configured_db_path: &str,
+) -> anyhow::Result<CcsProviderSource> {
+    resolve_codex_provider_source_with_default(configured_db_path, default_ccs_db_path())
 }
 
-pub fn sync_linked_profiles_from_db(
-    path: &Path,
-    profiles: &mut Vec<RelayProfile>,
-) -> anyhow::Result<usize> {
-    let providers = list_codex_providers_from_db(path)?;
-    let mut existing_ids = profiles
-        .iter()
-        .map(|profile| profile.id.clone())
-        .collect::<Vec<_>>();
-    let mut changed = 0usize;
-
-    for provider in providers {
-        if let Some(profile) = profiles
-            .iter_mut()
-            .find(|profile| profile.linked_ccs_provider_id == provider.source_id)
-        {
-            apply_ccs_provider_to_profile(profile, &provider);
-            changed += 1;
-            continue;
-        }
-
-        let mut profile = relay_profile_from_ccs(&provider, &existing_ids);
-        existing_ids.push(profile.id.clone());
-        apply_ccs_provider_to_profile(&mut profile, &provider);
-        profiles.push(profile);
-        changed += 1;
+fn resolve_codex_provider_source_with_default(
+    configured_db_path: &str,
+    default_db_path: PathBuf,
+) -> anyhow::Result<CcsProviderSource> {
+    let configured_db_path = configured_db_path.trim().to_string();
+    if configured_db_path.is_empty() {
+        let providers = list_codex_providers_from_db(&default_db_path)?;
+        return Ok(CcsProviderSource {
+            configured_db_path,
+            db_path: default_db_path,
+            fallback_reason: None,
+            providers,
+        });
     }
 
-    Ok(changed)
-}
-
-pub fn write_linked_profiles_to_default_db(profiles: &[RelayProfile]) -> anyhow::Result<usize> {
-    write_linked_profiles_to_db(&default_ccs_db_path(), profiles)
-}
-
-pub fn set_current_codex_provider_in_default_db(source_id: &str) -> anyhow::Result<bool> {
-    set_current_codex_provider(
-        &default_ccs_db_path(),
-        &default_ccs_settings_path(),
-        source_id,
-    )
-}
-
-pub fn set_current_codex_provider(
-    db_path: &Path,
-    settings_path: &Path,
-    source_id: &str,
-) -> anyhow::Result<bool> {
-    let source_id = source_id.trim();
-    if source_id.is_empty() || !db_path.exists() {
-        return Ok(false);
-    }
-
-    let mut conn = Connection::open(db_path)
-        .with_context(|| format!("failed to open provider database {}", db_path.display()))?;
-    let tx = conn.transaction()?;
-    tx.execute(
-        "UPDATE providers SET is_current = 0 WHERE app_type = 'codex'",
-        [],
-    )?;
-    let affected = tx.execute(
-        "UPDATE providers SET is_current = 1 WHERE id = ?1 AND app_type = 'codex'",
-        params![source_id],
-    )?;
-    tx.commit()?;
-
-    if affected == 0 {
-        return Ok(false);
-    }
-    set_current_codex_provider_in_settings(settings_path, source_id)?;
-    Ok(true)
-}
-
-fn set_current_codex_provider_in_settings(path: &Path, source_id: &str) -> anyhow::Result<()> {
-    let mut settings = if path.exists() {
-        let text = fs::read_to_string(path)
-            .with_context(|| format!("failed to read cc-switch settings {}", path.display()))?;
-        serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({}))
+    let custom_db_path = PathBuf::from(&configured_db_path);
+    let custom_result = if custom_db_path.exists() {
+        list_codex_providers_from_db(&custom_db_path)
     } else {
-        json!({})
+        Err(anyhow!("自定义数据库不存在：{}", custom_db_path.display()))
     };
-    if !settings.is_object() {
-        settings = json!({});
-    }
-    settings["currentProviderCodex"] = Value::String(source_id.to_string());
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(
-        path,
-        format!("{}\n", serde_json::to_string_pretty(&settings)?),
-    )
-    .with_context(|| format!("failed to write cc-switch settings {}", path.display()))?;
-    Ok(())
-}
-
-pub fn write_linked_profiles_to_db(
-    path: &Path,
-    profiles: &[RelayProfile],
-) -> anyhow::Result<usize> {
-    if !path.exists() {
-        return Ok(0);
-    }
-    let linked_profiles = profiles
-        .iter()
-        .filter(|profile| !profile.linked_ccs_provider_id.trim().is_empty())
-        .collect::<Vec<_>>();
-    if linked_profiles.is_empty() {
-        return Ok(0);
-    }
-
-    let conn = Connection::open(path)
-        .with_context(|| format!("failed to open provider database {}", path.display()))?;
-    let mut written = 0usize;
-    for profile in linked_profiles {
-        let source_id = profile.linked_ccs_provider_id.trim();
-        let settings_config = profile_to_ccs_settings_config(profile)?;
-        let affected = conn.execute(
-            "UPDATE providers
-             SET name = ?1, settings_config = ?2
-             WHERE id = ?3 AND app_type = 'codex'",
-            params![profile.name.trim(), settings_config.to_string(), source_id],
-        )?;
-        if affected > 0 {
-            written += 1;
+    match custom_result {
+        Ok(providers) => Ok(CcsProviderSource {
+            configured_db_path,
+            db_path: custom_db_path,
+            fallback_reason: None,
+            providers,
+        }),
+        Err(custom_error) => {
+            let providers = list_codex_providers_from_db(&default_db_path).with_context(|| {
+                format!(
+                    "自定义数据库不可用（{custom_error}），默认数据库 {} 也无法读取",
+                    default_db_path.display()
+                )
+            })?;
+            Ok(CcsProviderSource {
+                configured_db_path,
+                db_path: default_db_path,
+                fallback_reason: Some(format!(
+                    "自定义数据库不可用（{custom_error}），已回退默认数据库。"
+                )),
+                providers,
+            })
         }
     }
-    Ok(written)
 }
 
 pub fn list_codex_providers_from_db(path: &Path) -> anyhow::Result<Vec<CcsProviderImport>> {
@@ -203,94 +121,69 @@ pub fn list_codex_providers_from_db(path: &Path) -> anyhow::Result<Vec<CcsProvid
     Ok(providers)
 }
 
+pub fn imported_provider_identity(provider: &RelayProfile) -> String {
+    ccs_import_key(
+        strip_ccs_name_suffix(&provider.name),
+        &provider.upstream_base_url,
+    )
+}
+
+pub fn provider_identity_from_ccs(provider: &CcsProviderImport) -> String {
+    ccs_import_key(&provider.name, &provider.base_url)
+}
+
 pub fn relay_profile_from_ccs(
     provider: &CcsProviderImport,
     existing_ids: &[String],
 ) -> RelayProfile {
-    let id = unique_profile_id(
-        &format!("ccs-{}", sanitize_id(&provider.source_id)),
-        existing_ids,
-    );
     RelayProfile {
-        id,
-        linked_ccs_provider_id: provider.source_id.clone(),
-        name: provider.name.clone(),
+        id: unique_profile_id(
+            &format!("ccs-{}", sanitize_id(&provider.source_id)),
+            existing_ids,
+        ),
+        name: format!("{}（ccswitch）", strip_ccs_name_suffix(&provider.name)),
         model: String::new(),
         base_url: provider.base_url.clone(),
         upstream_base_url: provider.base_url.clone(),
         api_key: provider.api_key.clone(),
         protocol: provider.protocol,
-        relay_mode: relay_mode_from_ccs_provider(provider),
+        relay_mode: RelayMode::PureApi,
         official_mix_api_key: false,
+        no_auth: false,
+        hide_official_usage_alert: false,
         test_model: String::new(),
         config_contents: provider.config_contents.clone(),
         auth_contents: provider.auth_contents.clone(),
         use_common_config: true,
-        context_selection: crate::settings::RelayContextSelection::default(),
-        context_selection_initialized: false,
         context_window: String::new(),
         auto_compact_limit: String::new(),
         model_insert_mode: Default::default(),
         model_list: String::new(),
+        model_windows: String::new(),
+        model_auto_compact: String::new(),
+        model_metadata: String::new(),
+        model_vlm: String::new(),
+        vlm_api_key: String::new(),
+        vlm_model: String::new(),
+        vlm_base_url: String::new(),
         user_agent: String::new(),
+        sub2api_enabled: false,
+        sub2api_multiplier: String::new(),
+        model_routes: Vec::new(),
+        standard_openai_protocol: false,
     }
-}
-
-fn apply_ccs_provider_to_profile(profile: &mut RelayProfile, provider: &CcsProviderImport) {
-    profile.linked_ccs_provider_id = provider.source_id.clone();
-    profile.name = provider.name.clone();
-    profile.base_url = provider.base_url.clone();
-    profile.upstream_base_url = provider.base_url.clone();
-    profile.api_key = provider.api_key.clone();
-    profile.protocol = provider.protocol;
-    profile.relay_mode = relay_mode_from_ccs_provider(provider);
-    profile.config_contents = provider.config_contents.clone();
-    profile.auth_contents = provider.auth_contents.clone();
-}
-
-fn relay_mode_from_ccs_provider(provider: &CcsProviderImport) -> RelayMode {
-    if provider.base_url.trim().is_empty() && provider.api_key.trim().is_empty() {
-        RelayMode::Official
-    } else {
-        RelayMode::PureApi
-    }
-}
-
-fn profile_to_ccs_settings_config(profile: &RelayProfile) -> anyhow::Result<Value> {
-    let auth = if profile.auth_contents.trim().is_empty() {
-        json!({})
-    } else {
-        serde_json::from_str::<Value>(&profile.auth_contents)
-            .with_context(|| format!("{} 的 auth.json JSON 解析失败", profile.name))?
-    };
-    Ok(json!({
-        "auth": auth,
-        "config": profile.config_contents,
-    }))
 }
 
 fn import_from_ccs_value(source_id: &str, name: &str, config: &Value) -> Option<CcsProviderImport> {
-    let base_url = extract_base_url(config).unwrap_or_default();
+    let base_url = extract_base_url(config)?;
     let api_key = extract_api_key(config).unwrap_or_default();
     let protocol = extract_protocol(config);
-    let config_from_ccs = extract_config_contents(config).filter(|value| !value.trim().is_empty());
-    if config_from_ccs.is_none() && base_url.trim().is_empty() && api_key.trim().is_empty() {
-        return None;
-    }
-    let config_contents =
-        config_from_ccs.unwrap_or_else(|| build_config_toml(&base_url, &api_key, protocol));
+    let config_contents = extract_config_contents(config)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| build_config_toml(&base_url, &api_key, protocol));
     let auth_contents = extract_auth_contents(config)
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| {
-            if api_key.trim().is_empty() {
-                "{}\n".to_string()
-            } else {
-                build_auth_json(&api_key)
-            }
-        });
-    if config_contents.trim().is_empty() && auth_contents.trim().is_empty() {
-        return None;
-    }
+        .unwrap_or_else(|| build_auth_json(&api_key));
     Some(CcsProviderImport {
         source_id: source_id.to_string(),
         name: name.to_string(),
@@ -430,15 +323,15 @@ fn extract_toml_string_value(text: &str, key: &str) -> Option<String> {
 }
 
 fn build_config_toml(base_url: &str, api_key: &str, protocol: RelayProtocol) -> String {
-    let wire_api = match protocol {
-        RelayProtocol::Responses => "responses",
-        RelayProtocol::ChatCompletions => "chat",
-    };
+    // Codex 26.901+ 不再支持 wire_api = "chat"（openai/codex discussion #7782），
+    // Chat Completions 上游由本地协议代理转换，对 Codex 始终暴露 "responses"。
+    let _ = protocol;
+    let wire_api = "responses";
     [
-        "model_provider = \"custom\"".to_string(),
+        "model_provider = \"CodexPlusPlus\"".to_string(),
         String::new(),
-        "[model_providers.custom]".to_string(),
-        "name = \"custom\"".to_string(),
+        "[model_providers.CodexPlusPlus]".to_string(),
+        "name = \"CodexPlusPlus\"".to_string(),
         format!("wire_api = \"{wire_api}\""),
         "requires_openai_auth = true".to_string(),
         format!("base_url = \"{}\"", toml_string(base_url)),
@@ -458,6 +351,21 @@ fn build_auth_json(api_key: &str) -> String {
 
 fn toml_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn ccs_import_key(name: &str, base_url: &str) -> String {
+    format!(
+        "{}\n{}",
+        strip_ccs_name_suffix(name).trim().to_ascii_lowercase(),
+        base_url.trim().trim_end_matches('/').to_ascii_lowercase()
+    )
+}
+
+fn strip_ccs_name_suffix(name: &str) -> &str {
+    name.trim()
+        .strip_suffix("（ccswitch）")
+        .or_else(|| name.trim().strip_suffix("(ccswitch)"))
+        .unwrap_or_else(|| name.trim())
 }
 
 fn sanitize_id(value: &str) -> String {
@@ -515,7 +423,6 @@ mod tests {
                 settings_config TEXT NOT NULL,
                 created_at INTEGER,
                 sort_index INTEGER,
-                is_current BOOLEAN NOT NULL DEFAULT 0,
                 PRIMARY KEY (id, app_type)
             )",
             [],
@@ -540,240 +447,117 @@ mod tests {
         create_ccs_db(&db);
         insert_provider(
             &db,
-            "openai",
-            "OpenAI",
+            "one",
+            "One",
             json!({
-                "base_url": "https://api.openai.com/v1/",
-                "api_key": "sk-openai"
-            }),
-            0,
-        );
-
-        let providers = list_codex_providers_from_db(&db).unwrap();
-
-        assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].source_id, "openai");
-        assert_eq!(providers[0].name, "OpenAI");
-        assert_eq!(providers[0].base_url, "https://api.openai.com/v1");
-        assert_eq!(providers[0].api_key, "sk-openai");
-        assert_eq!(providers[0].protocol, RelayProtocol::Responses);
-        assert!(
-            providers[0]
-                .config_contents
-                .contains("wire_api = \"responses\"")
-        );
-    }
-
-    #[test]
-    fn imports_auth_and_config_object_provider_as_chat_protocol() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join(format!("{}-{}.db", "cc", "switch"));
-        create_ccs_db(&db);
-        insert_provider(
-            &db,
-            "chat",
-            "Chat Provider",
-            json!({
-                "auth": { "OPENAI_API_KEY": "sk-chat" },
-                "config": { "base_url": "https://relay.example/v1/chat/completions" }
-            }),
-            0,
-        );
-
-        let providers = list_codex_providers_from_db(&db).unwrap();
-
-        assert_eq!(
-            providers[0].base_url,
-            "https://relay.example/v1/chat/completions"
-        );
-        assert_eq!(providers[0].api_key, "sk-chat");
-        assert_eq!(providers[0].protocol, RelayProtocol::ChatCompletions);
-        assert_eq!(
-            serde_json::from_str::<Value>(&providers[0].auth_contents).unwrap()["OPENAI_API_KEY"],
-            json!("sk-chat")
-        );
-    }
-
-    #[test]
-    fn imports_toml_config_provider_and_preserves_config_text() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join(format!("{}-{}.db", "cc", "switch"));
-        create_ccs_db(&db);
-        let toml = r#"
-model_provider = "Foo"
-
-[model_providers.Foo]
-wire_api = "chat"
-base_url = "https://toml.example/v1"
-"#;
-        insert_provider(
-            &db,
-            "toml/provider",
-            "TOML Provider",
-            json!({
-                "auth": { "OPENAI_API_KEY": "sk-toml" },
-                "config": toml
-            }),
-            0,
-        );
-
-        let providers = list_codex_providers_from_db(&db).unwrap();
-        let profile = relay_profile_from_ccs(&providers[0], &["ccs-toml-provider".to_string()]);
-
-        assert_eq!(providers[0].base_url, "https://toml.example/v1");
-        assert_eq!(providers[0].protocol, RelayProtocol::ChatCompletions);
-        assert_eq!(providers[0].config_contents, toml);
-        assert_eq!(profile.id, "ccs-toml-provider-2");
-        assert_eq!(profile.relay_mode, RelayMode::PureApi);
-    }
-
-    #[test]
-    fn imports_codex_config_snapshot_without_base_url_as_official_profile() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join(format!("{}-{}.db", "cc", "switch"));
-        create_ccs_db(&db);
-        insert_provider(
-            &db,
-            "blue-eagle",
-            "蓝鹰AI",
-            json!({
-                "auth": {},
-                "config": "model = \"gpt-image-2\"\n\n[features]\ngoals = true\n"
-            }),
-            0,
-        );
-
-        let providers = list_codex_providers_from_db(&db).unwrap();
-
-        assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].name, "蓝鹰AI");
-        assert_eq!(providers[0].base_url, "");
-        let profile = relay_profile_from_ccs(&providers[0], &[]);
-        assert_eq!(profile.relay_mode, RelayMode::Official);
-        assert!(profile.config_contents.contains("gpt-image-2"));
-    }
-
-    #[test]
-    fn sync_linked_profiles_updates_existing_and_adds_new_profiles() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join(format!("{}-{}.db", "cc", "switch"));
-        create_ccs_db(&db);
-        insert_provider(
-            &db,
-            "linked-one",
-            "Linked One",
-            json!({
-                "auth": { "OPENAI_API_KEY": "sk-linked" },
-                "config": "model_provider = \"linked\"\n\n[model_providers.linked]\nbase_url = \"https://linked.example/v1\"\n"
-            }),
-            0,
-        );
-        insert_provider(
-            &db,
-            "linked-two",
-            "Linked Two",
-            json!({
-                "base_url": "https://two.example/v1",
-                "api_key": "sk-two"
+                "base_url": "https://example.com/v1/",
+                "apiKey": "key-1",
+                "api_format": "chat_completions"
             }),
             1,
         );
 
-        let mut profiles = vec![RelayProfile {
-            id: "local-linked".to_string(),
-            linked_ccs_provider_id: "linked-one".to_string(),
-            name: "Old".to_string(),
-            ..RelayProfile::default()
-        }];
-
-        let synced = sync_linked_profiles_from_db(&db, &mut profiles).unwrap();
-
-        assert_eq!(synced, 2);
-        assert_eq!(profiles.len(), 2);
-        assert_eq!(profiles[0].name, "Linked One");
-        assert_eq!(profiles[0].api_key, "sk-linked");
-        assert_eq!(profiles[1].linked_ccs_provider_id, "linked-two");
-        assert_eq!(profiles[1].base_url, "https://two.example/v1");
+        let providers = list_codex_providers_from_db(&db).unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].base_url, "https://example.com/v1");
+        assert_eq!(providers[0].api_key, "key-1");
+        assert_eq!(providers[0].protocol, RelayProtocol::ChatCompletions);
     }
 
     #[test]
-    fn write_linked_profiles_updates_cc_switch_provider_config() {
+    fn imports_toml_config_provider() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join(format!("{}-{}.db", "cc", "switch"));
         create_ccs_db(&db);
         insert_provider(
             &db,
-            "linked-one",
-            "Before",
+            "two",
+            "Two",
             json!({
-                "auth": { "OPENAI_API_KEY": "old" },
-                "config": "old"
+                "config": "model_provider = 'custom'\n[model_providers.custom]\nwire_api = 'responses'\nbase_url = 'https://relay.example/v1'\n",
+                "auth": { "OPENAI_API_KEY": "key-2" }
             }),
-            0,
+            1,
         );
-        let profiles = vec![RelayProfile {
-            linked_ccs_provider_id: "linked-one".to_string(),
-            name: "After".to_string(),
-            config_contents: "model_provider = \"custom\"\n".to_string(),
-            auth_contents: "{\"OPENAI_API_KEY\":\"sk-after\"}\n".to_string(),
-            ..RelayProfile::default()
-        }];
 
-        let written = write_linked_profiles_to_db(&db, &profiles).unwrap();
-
-        assert_eq!(written, 1);
-        let conn = Connection::open(&db).unwrap();
-        let (name, settings_config): (String, String) = conn
-            .query_row(
-                "SELECT name, settings_config FROM providers WHERE id = 'linked-one' AND app_type = 'codex'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        let settings_config: Value = serde_json::from_str(&settings_config).unwrap();
-        assert_eq!(name, "After");
-        assert_eq!(settings_config["auth"]["OPENAI_API_KEY"], "sk-after");
-        assert_eq!(settings_config["config"], "model_provider = \"custom\"\n");
+        let providers = list_codex_providers_from_db(&db).unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].base_url, "https://relay.example/v1");
+        assert_eq!(providers[0].api_key, "key-2");
+        assert_eq!(providers[0].protocol, RelayProtocol::Responses);
     }
 
     #[test]
-    fn set_current_codex_provider_updates_db_and_settings_file() {
+    fn resolved_source_prefers_a_valid_custom_database() {
         let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join(format!("{}-{}.db", "cc", "switch"));
-        let settings = dir.path().join("settings.json");
-        create_ccs_db(&db);
-        insert_provider(&db, "old", "Old", json!({ "config": "old" }), 0);
-        insert_provider(&db, "new", "New", json!({ "config": "new" }), 1);
-        Connection::open(&db)
+        let custom = dir.path().join("custom.db");
+        let default = dir.path().join("default.db");
+        create_ccs_db(&custom);
+        create_ccs_db(&default);
+        insert_provider(
+            &custom,
+            "custom",
+            "Custom",
+            json!({ "base_url": "https://custom.example/v1" }),
+            1,
+        );
+
+        let source =
+            resolve_codex_provider_source_with_default(&custom.to_string_lossy(), default.clone())
+                .unwrap();
+
+        assert_eq!(source.db_path, custom);
+        assert_eq!(source.fallback_reason, None);
+        assert_eq!(source.providers[0].name, "Custom");
+    }
+
+    #[test]
+    fn resolved_source_falls_back_when_custom_database_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let custom = dir.path().join("missing.db");
+        let default = dir.path().join("default.db");
+        create_ccs_db(&default);
+        insert_provider(
+            &default,
+            "default",
+            "Default",
+            json!({ "base_url": "https://default.example/v1" }),
+            1,
+        );
+
+        let source =
+            resolve_codex_provider_source_with_default(&custom.to_string_lossy(), default.clone())
+                .unwrap();
+
+        assert_eq!(source.configured_db_path, custom.to_string_lossy());
+        assert_eq!(source.db_path, default);
+        assert!(
+            source
+                .fallback_reason
+                .as_deref()
+                .unwrap()
+                .contains("不存在")
+        );
+        assert_eq!(source.providers[0].name, "Default");
+    }
+
+    #[test]
+    fn resolved_source_falls_back_when_custom_schema_is_incompatible() {
+        let dir = tempfile::tempdir().unwrap();
+        let custom = dir.path().join("custom.db");
+        let default = dir.path().join("default.db");
+        Connection::open(&custom)
             .unwrap()
-            .execute(
-                "UPDATE providers SET is_current = 1 WHERE id = 'old' AND app_type = 'codex'",
-                [],
-            )
+            .execute("CREATE TABLE unrelated (id TEXT)", [])
             .unwrap();
+        create_ccs_db(&default);
 
-        let updated = set_current_codex_provider(&db, &settings, "new").unwrap();
+        let source =
+            resolve_codex_provider_source_with_default(&custom.to_string_lossy(), default.clone())
+                .unwrap();
 
-        assert!(updated);
-        let conn = Connection::open(&db).unwrap();
-        let old_current: i64 = conn
-            .query_row(
-                "SELECT is_current FROM providers WHERE id = 'old' AND app_type = 'codex'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let new_current: i64 = conn
-            .query_row(
-                "SELECT is_current FROM providers WHERE id = 'new' AND app_type = 'codex'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(old_current, 0);
-        assert_eq!(new_current, 1);
-        let settings_value: Value =
-            serde_json::from_str(&std::fs::read_to_string(settings).unwrap()).unwrap();
-        assert_eq!(settings_value["currentProviderCodex"], json!("new"));
+        assert_eq!(source.db_path, default);
+        assert!(source.fallback_reason.is_some());
+        assert!(source.providers.is_empty());
     }
 }

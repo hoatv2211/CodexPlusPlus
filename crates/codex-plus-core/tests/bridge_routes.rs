@@ -33,10 +33,14 @@ async fn bridge_routes_cover_all_current_paths() {
         ("/user-scripts/reload", json!({})),
         ("/devtools/open", json!({})),
         ("/manager/open", json!({})),
+        ("/manager/open-transient", json!({})),
         ("/backend/status", json!({})),
-        ("/backend/repair", json!({})),
         ("/codex-model-catalog", json!({})),
         ("/codex-config-model", json!({})),
+        (
+            "/llm-proxy",
+            json!({"url": "http://example.com", "method": "POST"}),
+        ),
         ("/ads", json!({})),
         ("/zed-remote/status", json!({})),
         (
@@ -51,6 +55,15 @@ async fn bridge_routes_cover_all_current_paths() {
             "/zed-remote/open",
             json!({"ssh": {"host": "example.com"}, "path": "/home/app.py"}),
         ),
+        ("/zed-remote/projects", json!({})),
+        (
+            "/zed-remote/remember-project",
+            json!({"ssh": {"host": "example.com"}, "path": "/home/app.py"}),
+        ),
+        (
+            "/zed-remote/forget-project",
+            json!({"id": "zed-remote-project:test"}),
+        ),
         ("/upstream-worktree/status", json!({})),
         ("/upstream-worktree/defaults", json!({"repoPath": "/repo"})),
         (
@@ -61,25 +74,31 @@ async fn bridge_routes_cover_all_current_paths() {
             "/upstream-worktree/create",
             json!({"repoPath": "/repo", "branchName": "feature/demo"}),
         ),
+        ("/stepwise/settings", json!({})),
+        (
+            "/stepwise/generate",
+            json!({"request": {"lastUserMessage": "请继续", "lastAssistantMessage": "已完成"}}),
+        ),
+        ("/stepwise/test", json!({})),
         ("/delete", json!({"session_id": "s1", "title": "First"})),
         ("/undo", json!({"undo_token": "undo-1"})),
         (
             "/export-markdown",
             json!({"session_id": "s1", "title": "First"}),
         ),
-        ("/archived-thread", json!({"title": "Archived"})),
         (
-            "/move-thread-workspace",
-            json!({"session_id": "s1", "title": "First", "target_cwd": "/new"}),
-        ),
-        (
-            "/thread-sort-key",
+            "/thread-usage-history",
             json!({"session_id": "s1", "title": "First"}),
         ),
         (
-            "/thread-sort-keys",
-            json!({"sessions": [{"session_id": "s1", "title": "First"}]}),
+            "/session/export",
+            json!({"session_id": "s1", "title": "First"}),
         ),
+        (
+            "/session/import",
+            json!({"kind": "codex-rollout", "session_id": "s1", "content": "{}"}),
+        ),
+        ("/archived-thread", json!({"title": "Archived"})),
     ];
 
     for (path, payload) in cases {
@@ -89,6 +108,191 @@ async fn bridge_routes_cover_all_current_paths() {
             "{path} should be routed"
         );
     }
+}
+
+#[tokio::test]
+async fn llm_proxy_rejects_local_addresses() {
+    let ctx = test_context();
+
+    let result = handle_bridge_request(
+        ctx,
+        "/llm-proxy",
+        json!({
+            "url": "https://127.0.0.1/v1/chat/completions",
+            "method": "POST",
+            "headers": {"Authorization": "Bearer sk-test"},
+            "body": "{}"
+        }),
+    )
+    .await;
+
+    assert_eq!(result["status"], json!("failed"));
+    assert_eq!(result["message"], json!("Base URL 不得指向本机或私有网络"));
+}
+
+#[tokio::test]
+async fn llm_proxy_requires_https() {
+    let ctx = test_context();
+
+    let result = handle_bridge_request(
+        ctx,
+        "/llm-proxy",
+        json!({
+            "url": "http://api.example.com/v1/chat/completions",
+            "method": "POST",
+            "body": "{}"
+        }),
+    )
+    .await;
+
+    assert_eq!(result["status"], json!("failed"));
+    assert_eq!(result["message"], json!("Base URL 必须使用 HTTPS"));
+}
+
+#[tokio::test]
+async fn llm_proxy_rejects_non_post_methods() {
+    let ctx = test_context();
+
+    let result = handle_bridge_request(
+        ctx,
+        "/llm-proxy",
+        json!({
+            "url": "https://api.example.com/v1/chat/completions",
+            "method": "GET",
+            "body": "{}"
+        }),
+    )
+    .await;
+
+    assert_eq!(result["status"], json!("failed"));
+    assert_eq!(result["message"], json!("LLM Bridge 仅支持 POST 请求"));
+}
+
+#[tokio::test]
+async fn settings_get_includes_runtime_codex_app_version() {
+    let ctx = BridgeContext::new(
+        Arc::new(FakeSettings::with_codex_app_version("26.601.21317")),
+        Arc::new(FakeRuntime::default()),
+        Arc::new(FakeData::default()),
+    );
+
+    let result = handle_bridge_request(ctx, "/settings/get", json!({})).await;
+
+    assert_eq!(result["codexAppVersion"], json!("26.601.21317"));
+    assert_eq!(result["activeRelaySessionProvider"], json!("custom"));
+    assert_eq!(result["codexAppPluginMarketplaceUnlock"], json!(true));
+    assert_eq!(result.get("codexAppForcePluginInstall"), None);
+    assert_eq!(result["codexAppThreadIdBadge"], json!(false));
+}
+
+#[tokio::test]
+async fn settings_get_exposes_active_openai_session_provider() {
+    let settings = BackendSettings {
+        relay_profiles: vec![codex_plus_core::settings::RelayProfile {
+            config_contents: "model_provider = \"openai\"\n".to_string(),
+            ..codex_plus_core::settings::RelayProfile::default()
+        }],
+        ..BackendSettings::default()
+    };
+    let ctx = BridgeContext::new(
+        Arc::new(FakeSettings::with_settings(settings)),
+        Arc::new(FakeRuntime::default()),
+        Arc::new(FakeData::default()),
+    );
+
+    let result = handle_bridge_request(ctx, "/settings/get", json!({})).await;
+
+    assert_eq!(result["activeRelaySessionProvider"], json!("openai"));
+    assert_eq!(result["activeRelayCodexProvider"], json!("openai"));
+}
+
+#[tokio::test]
+async fn settings_get_preserves_arbitrary_custom_provider_id() {
+    let settings = BackendSettings {
+        relay_profiles: vec![codex_plus_core::settings::RelayProfile {
+            config_contents: "model_provider = \"ccswitch\"\n".to_string(),
+            ..codex_plus_core::settings::RelayProfile::default()
+        }],
+        ..BackendSettings::default()
+    };
+    let ctx = BridgeContext::new(
+        Arc::new(FakeSettings::with_settings(settings)),
+        Arc::new(FakeRuntime::default()),
+        Arc::new(FakeData::default()),
+    );
+
+    let result = handle_bridge_request(ctx, "/settings/get", json!({})).await;
+
+    assert_eq!(result["activeRelaySessionProvider"], json!("custom"));
+    assert_eq!(result["activeRelayCodexProvider"], json!("ccswitch"));
+}
+
+#[tokio::test]
+async fn settings_get_does_not_expose_stepwise_api_key_to_renderer() {
+    let settings = BackendSettings {
+        codex_app_stepwise_api_key: "sk-secret".to_string(),
+        ..BackendSettings::default()
+    };
+    let ctx = BridgeContext::new(
+        Arc::new(FakeSettings::with_settings(settings)),
+        Arc::new(FakeRuntime::default()),
+        Arc::new(FakeData::default()),
+    );
+
+    let result = handle_bridge_request(ctx, "/settings/get", json!({})).await;
+
+    assert!(result.get("codexAppStepwiseApiKey").is_none());
+    assert_eq!(
+        result["codexAppStepwiseApiKeyEnv"],
+        json!("CODEX_STEPWISE_API_KEY")
+    );
+}
+
+#[tokio::test]
+async fn settings_set_does_not_persist_runtime_codex_app_version() {
+    let settings = Arc::new(FakeSettings::with_codex_app_version("26.601.21317"));
+    let ctx = BridgeContext::new(
+        settings.clone(),
+        Arc::new(FakeRuntime::default()),
+        Arc::new(FakeData::default()),
+    );
+
+    let result = handle_bridge_request(
+        ctx,
+        "/settings/set",
+        json!({
+            "codexAppVersion": "1.2.3",
+            "codexAppPluginMarketplaceUnlock": false
+        }),
+    )
+    .await;
+
+    assert_eq!(result["codexAppVersion"], json!("26.601.21317"));
+    assert_eq!(result["codexAppPluginMarketplaceUnlock"], json!(false));
+
+    let persisted = settings.settings.lock().unwrap().clone();
+    let persisted_value = serde_json::to_value(persisted).unwrap();
+    assert!(persisted_value.get("codexAppVersion").is_none());
+}
+
+#[tokio::test]
+async fn bridge_context_core_with_app_dir_exposes_runtime_codex_app_version() {
+    let temp = tempfile::tempdir().unwrap();
+    let app_dir = temp
+        .path()
+        .join("OpenAI.Codex_26.601.21317.0_x64__abc")
+        .join("app");
+    std::fs::create_dir_all(&app_dir).unwrap();
+    std::fs::write(app_dir.join("Codex.exe"), "").unwrap();
+    let ctx = BridgeContext::core_with_data_and_app_dir(
+        Arc::new(FakeRuntime::default()),
+        Arc::new(FakeData::default()),
+        app_dir,
+    );
+
+    let result = handle_bridge_request(ctx, "/settings/get", json!({})).await;
+
+    assert_eq!(result["codexAppVersion"], json!("26.601.21317.0"));
 }
 
 #[tokio::test]
@@ -144,6 +348,63 @@ async fn upstream_worktree_routes_are_dispatched_to_runtime() {
 }
 
 #[tokio::test]
+async fn stepwise_routes_use_settings_service() {
+    let settings = BackendSettings {
+        codex_app_stepwise_enabled: false,
+        codex_app_stepwise_generation_mode: "manual".to_string(),
+        codex_app_stepwise_direct_send: true,
+        codex_app_stepwise_model: "settings-service-stepwise".to_string(),
+        codex_app_stepwise_max_items: 3,
+        ..BackendSettings::default()
+    };
+    let ctx = BridgeContext::new(
+        Arc::new(FakeSettings::with_settings(settings)),
+        Arc::new(FakeRuntime::default()),
+        Arc::new(FakeData::default()),
+    );
+
+    let public_settings = handle_bridge_request(ctx.clone(), "/stepwise/settings", json!({})).await;
+    assert_eq!(public_settings["settings"]["enabled"], json!(false));
+    assert_eq!(
+        public_settings["settings"]["generationMode"],
+        json!("manual")
+    );
+    assert_eq!(
+        public_settings["settings"]["answerOutlineEnabled"],
+        json!(false)
+    );
+    assert_eq!(public_settings["settings"]["directSend"], json!(true));
+    assert_eq!(
+        public_settings["settings"]["model"],
+        json!("settings-service-stepwise")
+    );
+    assert_eq!(public_settings["settings"]["maxItems"], json!(3));
+    assert_eq!(
+        handle_bridge_request(
+            ctx.clone(),
+            "/stepwise/generate",
+            json!({"request": {"lastUserMessage": "请继续", "lastAssistantMessage": "已完成"}}),
+        )
+        .await,
+        json!({
+            "status": "ok",
+            "disabled": true,
+            "protocol": "chat_completions",
+            "items": []
+        })
+    );
+    assert_eq!(
+        handle_bridge_request(ctx, "/stepwise/test", json!({})).await,
+        json!({
+            "status": "ok",
+            "disabled": true,
+            "protocol": "chat_completions",
+            "items": []
+        })
+    );
+}
+
+#[tokio::test]
 async fn unknown_bridge_path_preserves_empty_session_id_shape() {
     let result = handle_bridge_request(
         test_context(),
@@ -169,7 +430,7 @@ async fn settings_routes_use_settings_service() {
     let updated = handle_bridge_request(
         ctx.clone(),
         "/settings/set",
-        json!({"providerSyncEnabled": true, "codexAppSessionDelete": false, "codexAppServiceTierControls": true, "cliWrapperApiKeyEnv": ""}),
+        json!({"providerSyncEnabled": true, "codexAppSessionDelete": false, "codexAppServiceTierControls": true, "codexAppPetRealMouseLook": true}),
     )
     .await;
     let loaded = handle_bridge_request(ctx, "/settings/get", json!({})).await;
@@ -177,51 +438,8 @@ async fn settings_routes_use_settings_service() {
     assert_eq!(updated["providerSyncEnabled"], true);
     assert_eq!(updated["codexAppSessionDelete"], false);
     assert_eq!(updated["codexAppServiceTierControls"], true);
-    assert_eq!(updated["cliWrapperApiKeyEnv"], "CUSTOM_OPENAI_API_KEY");
+    assert_eq!(updated["codexAppPetRealMouseLook"], true);
     assert_eq!(loaded, updated);
-}
-
-#[tokio::test]
-async fn account_routes_list_and_switch_saved_profiles() {
-    let ctx = test_context_with_settings(BackendSettings {
-        active_relay_id: "account-a".to_string(),
-        relay_profiles: vec![
-            RelayProfile {
-                id: "account-a".to_string(),
-                name: "Tai khoan A".to_string(),
-                config_contents: "model = \"gpt-5\"\n".to_string(),
-                auth_contents: "{\"auth_mode\":\"chatgpt-a\"}".to_string(),
-                ..RelayProfile::default()
-            },
-            RelayProfile {
-                id: "account-b".to_string(),
-                name: "Tai khoan B".to_string(),
-                config_contents: "model = \"gpt-5-mini\"\n".to_string(),
-                auth_contents: "{\"auth_mode\":\"chatgpt-b\"}".to_string(),
-                ..RelayProfile::default()
-            },
-        ],
-        ..BackendSettings::default()
-    });
-
-    let listed = handle_bridge_request(ctx.clone(), "/accounts/list", json!({})).await;
-    assert_eq!(listed["status"], "ok");
-    assert_eq!(listed["activeProfileId"], "account-a");
-    assert_eq!(listed["accounts"][0]["name"], "Tai khoan A");
-    assert_eq!(listed["accounts"][1]["active"], false);
-
-    let switched = handle_bridge_request(
-        ctx.clone(),
-        "/accounts/switch",
-        json!({"profileId": "account-b"}),
-    )
-    .await;
-    assert_eq!(switched["status"], "ok");
-    assert_eq!(switched["activeProfileId"], "account-b");
-    assert_eq!(switched["activeProfileName"], "Tai khoan B");
-
-    let loaded = handle_bridge_request(ctx, "/settings/get", json!({})).await;
-    assert_eq!(loaded["activeRelayId"], "account-b");
 }
 
 #[tokio::test]
@@ -252,24 +470,82 @@ async fn runtime_routes_keep_user_script_inventory_shape() {
 }
 
 #[tokio::test]
+async fn account_routes_list_and_switch_saved_profiles() {
+    let ctx = test_context_with_settings(BackendSettings {
+        active_relay_id: "account-a".to_string(),
+        relay_profiles: vec![
+            RelayProfile {
+                id: "account-a".to_string(),
+                name: "Account A".to_string(),
+                config_contents: "model = \"gpt-5\"\n".to_string(),
+                auth_contents: "{\"auth_mode\":\"chatgpt-a\"}".to_string(),
+                ..RelayProfile::default()
+            },
+            RelayProfile {
+                id: "account-b".to_string(),
+                name: "Account B".to_string(),
+                config_contents: "model = \"gpt-5-mini\"\n".to_string(),
+                auth_contents: "{\"auth_mode\":\"chatgpt-b\"}".to_string(),
+                ..RelayProfile::default()
+            },
+        ],
+        ..BackendSettings::default()
+    });
+
+    let listed = handle_bridge_request(ctx.clone(), "/accounts/list", json!({})).await;
+    assert_eq!(listed["status"], "ok");
+    assert_eq!(listed["activeProfileId"], "account-a");
+    assert_eq!(listed["accounts"][0]["name"], "Account A");
+    assert_eq!(listed["accounts"][1]["active"], false);
+
+    let switched = handle_bridge_request(
+        ctx.clone(),
+        "/accounts/switch",
+        json!({"profileId": "account-b"}),
+    )
+    .await;
+    assert_eq!(switched["status"], "ok");
+    assert_eq!(switched["activeProfileId"], "account-b");
+    assert_eq!(switched["activeProfileName"], "Account B");
+
+    let loaded = handle_bridge_request(ctx, "/settings/get", json!({})).await;
+    assert_eq!(loaded["activeRelayId"], "account-b");
+}
+
+#[tokio::test]
 async fn runtime_status_devtools_repair_and_ads_routes_are_dispatched() {
-    let ctx = test_context();
+    let runtime = Arc::new(FakeRuntime::default());
+    let ctx = BridgeContext::new(
+        Arc::new(FakeSettings::default()),
+        runtime.clone(),
+        Arc::new(FakeData::default()),
+    );
 
     assert_eq!(
         handle_bridge_request(ctx.clone(), "/devtools/open", json!({})).await,
         json!({"status": "ok", "opened": true})
     );
+    let manager_payload = json!({"page": "settings", "section": "stepwise"});
     assert_eq!(
-        handle_bridge_request(ctx.clone(), "/manager/open", json!({})).await,
+        handle_bridge_request(ctx.clone(), "/manager/open", manager_payload.clone()).await,
         json!({"status": "ok", "opened": "manager"})
     );
+    assert_eq!(*runtime.manager_payload.lock().unwrap(), manager_payload);
+
+    let transient_payload = json!({"page": "settings"});
+    assert_eq!(
+        handle_bridge_request(
+            ctx.clone(),
+            "/manager/open-transient",
+            transient_payload.clone(),
+        )
+        .await,
+        json!({"status": "ok", "opened": "manager-transient"})
+    );
+    assert_eq!(*runtime.manager_payload.lock().unwrap(), transient_payload);
     assert_eq!(
         handle_bridge_request(ctx.clone(), "/backend/status", json!({})).await,
-        json!({"status": "ok", "message": "后端已连接", "version": codex_plus_core::version::VERSION})
-    );
-    assert_eq!(
-        handle_bridge_request(ctx.clone(), "/backend/repair", json!({})).await,
-        json!({"status": "ok", "message": "后端已修复", "version": codex_plus_core::version::VERSION})
+        json!({"status": "ok", "message": "后端已连接", "version": codex_plus_core::version::VERSION, "hideOfficialUsageAlert": false})
     );
     assert_eq!(
         handle_bridge_request(ctx.clone(), "/ads", json!({})).await,
@@ -306,13 +582,71 @@ async fn runtime_status_devtools_repair_and_ads_routes_are_dispatched() {
     );
     assert_eq!(
         handle_bridge_request(
-            ctx,
+            ctx.clone(),
             "/zed-remote/open",
             json!({"ssh": {"host": "example.com"}, "path": "/home/app.py"}),
         )
         .await,
-        json!({"status": "ok", "url": "ssh://example.com/home/app.py"})
+        json!({"status": "ok", "url": "ssh://example.com/home/app.py", "strategy": "addToFocusedWorkspace"})
     );
+    assert_eq!(
+        handle_bridge_request(ctx.clone(), "/zed-remote/projects", json!({})).await,
+        json!({
+            "status": "ok",
+            "projects": [{
+                "id": "zed-remote-project:test",
+                "label": "sealos-skills",
+                "hostId": "remote-ssh-codex-managed:remote",
+                "ssh": {"user": "longnv", "host": "192.168.100.31", "port": null},
+                "path": "/Users/longnv/bin/repo/sealos-skills",
+                "url": "ssh://longnv@192.168.100.31/Users/longnv/bin/repo/sealos-skills",
+                "source": "codexRemoteProject",
+                "lastOpenedAtMs": null,
+                "isCurrent": false
+            }]
+        })
+    );
+    assert_eq!(
+        handle_bridge_request(
+            ctx.clone(),
+            "/zed-remote/remember-project",
+            json!({"ssh": {"host": "example.com"}, "path": "/home/app.py"}),
+        )
+        .await,
+        json!({"status": "ok", "remembered": true})
+    );
+    assert_eq!(
+        handle_bridge_request(
+            ctx,
+            "/zed-remote/forget-project",
+            json!({"id": "zed-remote-project:test"}),
+        )
+        .await,
+        json!({"status": "ok", "removed": 1})
+    );
+}
+
+#[tokio::test]
+async fn backend_status_includes_active_official_usage_alert_setting() {
+    let settings = BackendSettings {
+        active_relay_id: "official".to_string(),
+        relay_profiles: vec![codex_plus_core::settings::RelayProfile {
+            id: "official".to_string(),
+            relay_mode: codex_plus_core::settings::RelayMode::Official,
+            hide_official_usage_alert: true,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let ctx = BridgeContext::new(
+        Arc::new(FakeSettings::with_settings(settings)),
+        Arc::new(FakeRuntime::default()),
+        Arc::new(FakeData::default()),
+    );
+
+    let result = handle_bridge_request(ctx, "/backend/status", json!({})).await;
+
+    assert_eq!(result["hideOfficialUsageAlert"], true);
 }
 
 #[tokio::test]
@@ -350,38 +684,42 @@ async fn data_routes_forward_payloads_to_data_service() {
     assert_eq!(
         handle_bridge_request(
             ctx.clone(),
+            "/thread-usage-history",
+            json!({"session_id": "s1", "title": "First"}),
+        )
+        .await,
+        json!({
+            "status": "ok",
+            "session_id": "s1",
+            "history": [
+                {
+                    "source": "rollout-history",
+                    "conversation_id": "local:s1",
+                    "turn_id": "turn-1",
+                    "observed_at": "2026-06-02T05:00:00Z",
+                    "usage": {
+                        "inputTokens": 1200,
+                        "outputTokens": 120,
+                        "totalTokens": 1320,
+                        "cachedTokens": 900,
+                        "cacheReadTokens": 0,
+                        "cacheCreationTokens": 0,
+                        "contextUsed": 1320,
+                        "contextLimit": 258400,
+                        "hasBreakdown": true
+                    }
+                }
+            ]
+        })
+    );
+    assert_eq!(
+        handle_bridge_request(
+            ctx.clone(),
             "/archived-thread",
             json!({"title": "Archived"})
         )
         .await,
         json!({"session_id": "archived-1", "title": "Archived"})
-    );
-    assert_eq!(
-        handle_bridge_request(
-            ctx.clone(),
-            "/move-thread-workspace",
-            json!({"session_id": "s1", "title": "First", "target_cwd": "/new"}),
-        )
-        .await,
-        json!({"status": "moved", "session_id": "s1", "target_cwd": "/new"})
-    );
-    assert_eq!(
-        handle_bridge_request(
-            ctx.clone(),
-            "/thread-sort-key",
-            json!({"session_id": "s1", "title": "First"}),
-        )
-        .await,
-        json!({"status": "ok", "session_id": "s1", "updated_at": 123})
-    );
-    assert_eq!(
-        handle_bridge_request(
-            ctx,
-            "/thread-sort-keys",
-            json!({"sessions": [{"session_id": "s1", "title": "First"}, null, {"session_id": "s2"}]}),
-        )
-        .await,
-        json!({"status": "ok", "sort_keys": [{"session_id": "s1"}, {"session_id": "s2"}]})
     );
 }
 
@@ -458,6 +796,41 @@ async fn user_script_manager_scans_and_persists_inventory_shape() {
         .unwrap(),
         json!({"enabled": false, "scripts": {}})
     );
+}
+
+#[tokio::test]
+async fn user_script_inventory_merges_renderer_runtime_status() {
+    let temp = tempfile::tempdir().unwrap();
+    let builtin_dir = temp.path().join("builtin");
+    let user_dir = temp.path().join("user");
+    std::fs::create_dir_all(&builtin_dir).unwrap();
+    std::fs::create_dir_all(&user_dir).unwrap();
+    std::fs::write(user_dir.join("loaded.js"), "window.loaded = true;").unwrap();
+    std::fs::write(user_dir.join("failed.js"), "throw new Error('boom');").unwrap();
+    let manager =
+        UserScriptManager::new(builtin_dir, user_dir, temp.path().join("user_scripts.json"));
+    let runtime_status = json!({
+        "user:loaded.js": {"status": "loaded", "error": ""},
+        "user:failed.js": {"status": "failed", "error": "boom"}
+    });
+
+    let inventory = manager
+        .inventory_with_runtime_status(Some(&runtime_status))
+        .unwrap();
+    let scripts = inventory["scripts"].as_array().unwrap();
+    let loaded = scripts
+        .iter()
+        .find(|script| script["key"] == "user:loaded.js")
+        .unwrap();
+    let failed = scripts
+        .iter()
+        .find(|script| script["key"] == "user:failed.js")
+        .unwrap();
+
+    assert_eq!(loaded["status"], "loaded");
+    assert_eq!(loaded["error"], "");
+    assert_eq!(failed["status"], "failed");
+    assert_eq!(failed["error"], "boom");
 }
 
 #[tokio::test]
@@ -543,16 +916,11 @@ async fn core_runtime_reload_evaluates_enabled_user_bundle_and_status_is_ok() {
     let ctx = BridgeContext::core_with_data(Arc::new(runtime), Arc::new(FakeData::default()));
 
     let status = handle_bridge_request(ctx.clone(), "/backend/status", json!({})).await;
-    let repaired = handle_bridge_request(ctx.clone(), "/backend/repair", json!({})).await;
     let reloaded = handle_bridge_request(ctx, "/user-scripts/reload", json!({})).await;
 
     assert_eq!(
         status,
-        json!({"status": "ok", "message": "后端已连接", "version": codex_plus_core::version::VERSION})
-    );
-    assert_eq!(
-        repaired,
-        json!({"status": "ok", "message": "后端已连接", "version": codex_plus_core::version::VERSION})
+        json!({"status": "ok", "message": "后端已连接", "version": codex_plus_core::version::VERSION, "hideOfficialUsageAlert": false})
     );
     assert_eq!(reloaded["scripts"][0]["key"], "builtin:demo.js");
     let evaluated = evaluated.lock().unwrap();
@@ -824,7 +1192,7 @@ fn test_context() -> BridgeContext {
 
 fn test_context_with_settings(settings: BackendSettings) -> BridgeContext {
     BridgeContext::new(
-        Arc::new(FakeSettings::new(settings)),
+        Arc::new(FakeSettings::with_settings(settings)),
         Arc::new(FakeRuntime::default()),
         Arc::new(FakeData::default()),
     )
@@ -833,12 +1201,21 @@ fn test_context_with_settings(settings: BackendSettings) -> BridgeContext {
 #[derive(Default)]
 struct FakeSettings {
     settings: Mutex<BackendSettings>,
+    codex_app_version: Mutex<String>,
 }
 
 impl FakeSettings {
-    fn new(settings: BackendSettings) -> Self {
+    fn with_settings(settings: BackendSettings) -> Self {
         Self {
             settings: Mutex::new(settings),
+            codex_app_version: Mutex::new(String::new()),
+        }
+    }
+
+    fn with_codex_app_version(version: &str) -> Self {
+        Self {
+            settings: Mutex::new(BackendSettings::default()),
+            codex_app_version: Mutex::new(version.to_string()),
         }
     }
 }
@@ -860,19 +1237,19 @@ impl BridgeSettingsService for FakeSettings {
             raw.insert("enhancementsEnabled".to_string(), json!(value));
         }
         for key in [
-            "codexAppPluginEntryUnlock",
-            "codexAppForcePluginInstall",
+            "codexAppPluginMarketplaceUnlock",
             "codexAppModelWhitelistUnlock",
             "codexAppSessionDelete",
             "codexAppMarkdownExport",
-            "codexAppProjectMove",
-            "codexAppConversationTimeline",
+            "codexAppForceChineseLocale",
+            "codexAppThreadIdBadge",
             "codexAppConversationView",
             "codexAppThreadScrollRestore",
             "codexAppZedRemoteOpen",
             "codexAppUpstreamWorktreeCreate",
             "codexAppNativeMenuPlacement",
             "codexAppServiceTierControls",
+            "codexAppPetRealMouseLook",
         ] {
             if let Some(value) = payload.get(key).and_then(Value::as_bool) {
                 raw.insert(key.to_string(), json!(value));
@@ -886,16 +1263,6 @@ impl BridgeSettingsService for FakeSettings {
         }
         if let Some(value) = payload.get("relayApiKey").and_then(Value::as_str) {
             raw.insert("relayApiKey".to_string(), json!(value));
-        }
-        if let Some(value) = payload.get("cliWrapperApiKeyEnv").and_then(Value::as_str) {
-            raw.insert(
-                "cliWrapperApiKeyEnv".to_string(),
-                json!(if value.is_empty() {
-                    "CUSTOM_OPENAI_API_KEY"
-                } else {
-                    value
-                }),
-            );
         }
         let updated: BackendSettings = serde_json::from_value(Value::Object(raw.clone())).unwrap();
         *self.settings.lock().unwrap() = updated.clone();
@@ -914,7 +1281,7 @@ impl BridgeSettingsService for FakeSettings {
                 "active": profile.id == settings.active_relay_id,
                 "hasConfig": !profile.config_contents.trim().is_empty(),
                 "hasAuth": !profile.auth_contents.trim().is_empty(),
-            })).collect::<Vec<_>>()
+            })).collect::<Vec<_>>(),
         }))
     }
 
@@ -925,20 +1292,25 @@ impl BridgeSettingsService for FakeSettings {
             .iter()
             .find(|profile| profile.id == profile_id)
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Khong tim thay tai khoan da luu: {profile_id}"))?;
+            .ok_or_else(|| anyhow::anyhow!("Saved account not found: {profile_id}"))?;
         settings.active_relay_id = profile.id.clone();
         Ok(json!({
             "status": "ok",
-            "message": "Da chuyen tai khoan. Khoi dong lai Codex neu phien hien tai chua doi ngay.",
+            "message": "Saved account switched successfully",
             "activeProfileId": profile.id,
             "activeProfileName": profile.name,
         }))
+    }
+
+    async fn codex_app_version(&self) -> anyhow::Result<String> {
+        Ok(self.codex_app_version.lock().unwrap().clone())
     }
 }
 
 struct FakeRuntime {
     enabled: Mutex<bool>,
     script_enabled: Mutex<bool>,
+    manager_payload: Mutex<Value>,
 }
 
 impl Default for FakeRuntime {
@@ -946,6 +1318,7 @@ impl Default for FakeRuntime {
         Self {
             enabled: Mutex::new(true),
             script_enabled: Mutex::new(true),
+            manager_payload: Mutex::new(json!({})),
         }
     }
 }
@@ -981,19 +1354,19 @@ impl BridgeRuntimeService for FakeRuntime {
         Ok(json!({"status": "ok", "opened": true}))
     }
 
-    async fn open_manager(&self) -> anyhow::Result<Value> {
+    async fn open_manager(&self, payload: Value) -> anyhow::Result<Value> {
+        *self.manager_payload.lock().unwrap() = payload;
         Ok(json!({"status": "ok", "opened": "manager"}))
+    }
+
+    async fn open_transient_manager(&self, payload: Value) -> anyhow::Result<Value> {
+        *self.manager_payload.lock().unwrap() = payload;
+        Ok(json!({"status": "ok", "opened": "manager-transient"}))
     }
 
     async fn backend_status(&self) -> anyhow::Result<Value> {
         Ok(
             json!({"status": "ok", "message": "后端已连接", "version": codex_plus_core::version::VERSION}),
-        )
-    }
-
-    async fn repair_backend(&self) -> anyhow::Result<Value> {
-        Ok(
-            json!({"status": "ok", "message": "后端已修复", "version": codex_plus_core::version::VERSION}),
         )
     }
 
@@ -1044,7 +1417,36 @@ impl BridgeRuntimeService for FakeRuntime {
 
     async fn open_zed_remote(&self, payload: Value) -> anyhow::Result<Value> {
         assert_eq!(payload["path"], json!("/home/app.py"));
-        Ok(json!({"status": "ok", "url": "ssh://example.com/home/app.py"}))
+        Ok(
+            json!({"status": "ok", "url": "ssh://example.com/home/app.py", "strategy": "addToFocusedWorkspace"}),
+        )
+    }
+
+    async fn list_zed_remote_projects(&self, _payload: Value) -> anyhow::Result<Value> {
+        Ok(json!({
+            "status": "ok",
+            "projects": [{
+                "id": "zed-remote-project:test",
+                "label": "sealos-skills",
+                "hostId": "remote-ssh-codex-managed:remote",
+                "ssh": {"user": "longnv", "host": "192.168.100.31", "port": null},
+                "path": "/Users/longnv/bin/repo/sealos-skills",
+                "url": "ssh://longnv@192.168.100.31/Users/longnv/bin/repo/sealos-skills",
+                "source": "codexRemoteProject",
+                "lastOpenedAtMs": null,
+                "isCurrent": false
+            }]
+        }))
+    }
+
+    async fn remember_zed_remote_project(&self, payload: Value) -> anyhow::Result<Value> {
+        assert_eq!(payload["path"], json!("/home/app.py"));
+        Ok(json!({"status": "ok", "remembered": true}))
+    }
+
+    async fn forget_zed_remote_project(&self, payload: Value) -> anyhow::Result<Value> {
+        assert_eq!(payload["id"], json!("zed-remote-project:test"));
+        Ok(json!({"status": "ok", "removed": 1}))
     }
 
     async fn upstream_worktree_status(&self) -> anyhow::Result<Value> {
@@ -1138,6 +1540,32 @@ impl BridgeDataService for FakeData {
         })
     }
 
+    async fn thread_usage_history(&self, session: SessionRef) -> anyhow::Result<Value> {
+        Ok(json!({
+            "status": "ok",
+            "session_id": session.session_id,
+            "history": [
+                {
+                    "source": "rollout-history",
+                    "conversation_id": "local:s1",
+                    "turn_id": "turn-1",
+                    "observed_at": "2026-06-02T05:00:00Z",
+                    "usage": {
+                        "inputTokens": 1200,
+                        "outputTokens": 120,
+                        "totalTokens": 1320,
+                        "cachedTokens": 900,
+                        "cacheReadTokens": 0,
+                        "cacheCreationTokens": 0,
+                        "contextUsed": 1320,
+                        "contextLimit": 258400,
+                        "hasBreakdown": true
+                    }
+                }
+            ]
+        }))
+    }
+
     async fn find_archived_thread_by_title(
         &self,
         title: String,
@@ -1145,28 +1573,6 @@ impl BridgeDataService for FakeData {
         Ok(Some(SessionRef {
             session_id: "archived-1".to_string(),
             title,
-        }))
-    }
-
-    async fn move_thread_workspace(
-        &self,
-        session: SessionRef,
-        target_cwd: String,
-    ) -> anyhow::Result<Value> {
-        Ok(json!({"status": "moved", "session_id": session.session_id, "target_cwd": target_cwd}))
-    }
-
-    async fn thread_sort_key(&self, session: SessionRef) -> anyhow::Result<Value> {
-        Ok(json!({"status": "ok", "session_id": session.session_id, "updated_at": 123}))
-    }
-
-    async fn thread_sort_keys(&self, sessions: Vec<SessionRef>) -> anyhow::Result<Value> {
-        Ok(json!({
-            "status": "ok",
-            "sort_keys": sessions
-                .into_iter()
-                .map(|session| json!({"session_id": session.session_id}))
-                .collect::<Vec<_>>()
         }))
     }
 }
@@ -1210,6 +1616,10 @@ impl LaunchHooks for ContextHooks {
         Ok(())
     }
 
+    async fn run_remote_control_session_recovery(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     async fn start_helper(&self, _helper_port: u16) -> anyhow::Result<()> {
         Ok(())
     }
@@ -1218,6 +1628,7 @@ impl LaunchHooks for ContextHooks {
         &self,
         _app_dir: &std::path::Path,
         _debug_port: u16,
+        _settings: &BackendSettings,
         _extra_args: &[String],
     ) -> anyhow::Result<CodexLaunch> {
         Ok(CodexLaunch::Process {
@@ -1227,7 +1638,11 @@ impl LaunchHooks for ContextHooks {
         })
     }
 
-    async fn bridge_context(&self, debug_port: u16) -> anyhow::Result<Option<BridgeContext>> {
+    async fn bridge_context(
+        &self,
+        debug_port: u16,
+        _app_dir: &std::path::Path,
+    ) -> anyhow::Result<Option<BridgeContext>> {
         self.event(format!("bridge-context:{debug_port}"));
         Ok(Some(test_context()))
     }
@@ -1255,7 +1670,11 @@ impl LaunchHooks for ContextHooks {
         self.event(format!("status:{status}"));
     }
 
-    async fn wait_for_codex_exit(&self, _launch: &CodexLaunch) -> anyhow::Result<()> {
+    async fn wait_for_codex_exit(
+        &self,
+        _launch: &CodexLaunch,
+        _debug_port: u16,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 

@@ -8,6 +8,8 @@ use super::{
 const UNINSTALL_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexPlusPlus";
 const LEGACY_UNINSTALL_SUBKEY: &str =
     r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Codex++";
+const URL_PROTOCOL_SUBKEY: &str = r"Software\Classes\codexplusplus";
+const DREAM_SKIN_URL_PROTOCOL_SUBKEY: &str = r"Software\Classes\dreamskin";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowsEntrypointPlan {
@@ -19,6 +21,9 @@ pub struct WindowsEntrypointPlan {
     pub icon_path: String,
     pub silent_icon_path: String,
     pub manager_icon_path: String,
+    pub uninstaller_path: String,
+    pub uninstall_command: String,
+    pub quiet_uninstall_command: String,
     pub uninstall_key: String,
     pub legacy_uninstall_key: String,
     pub remove_owned_data: bool,
@@ -29,6 +34,13 @@ pub fn build_windows_entrypoint_plan(options: &InstallOptions) -> WindowsEntrypo
     let launcher_path = option_or_current_exe(&options.launcher_path, SILENT_BINARY);
     let manager_path = option_or_current_exe(&options.manager_path, MANAGER_BINARY);
     let icon_path = default_icon_path();
+    let install_location = manager_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| install_root.clone());
+    let uninstaller_path = install_location.join("uninstall.exe");
+    let uninstall_command = format!("\"{}\"", uninstaller_path.to_string_lossy());
+    let quiet_uninstall_command = format!("{uninstall_command} /S");
     WindowsEntrypointPlan {
         silent_shortcut: install_root
             .join("Codex++.lnk")
@@ -44,6 +56,9 @@ pub fn build_windows_entrypoint_plan(options: &InstallOptions) -> WindowsEntrypo
         icon_path: icon_path.to_string_lossy().to_string(),
         silent_icon_path: launcher_path.to_string_lossy().to_string(),
         manager_icon_path: manager_path.to_string_lossy().to_string(),
+        uninstaller_path: uninstaller_path.to_string_lossy().to_string(),
+        uninstall_command,
+        quiet_uninstall_command,
         uninstall_key: "CodexPlusPlus".to_string(),
         legacy_uninstall_key: "Codex++".to_string(),
         remove_owned_data: options.remove_owned_data,
@@ -67,6 +82,7 @@ pub fn install_shortcuts(options: &InstallOptions) -> anyhow::Result<()> {
         "Open Codex++ management tool",
         PathBuf::from(&plan.manager_icon_path),
     )?;
+    register_url_protocol(&plan.manager_path)?;
     write_uninstall_registration(&plan)?;
     Ok(())
 }
@@ -76,6 +92,26 @@ pub fn uninstall_shortcuts(options: &InstallOptions) -> anyhow::Result<()> {
     let plan = build_windows_entrypoint_plan(options);
     let _ = std::fs::remove_file(&plan.silent_shortcut);
     let _ = std::fs::remove_file(&plan.manager_shortcut);
+    let _ = crate::windows_integration::delete_current_user_key(&format!(
+        r"{URL_PROTOCOL_SUBKEY}\shell\open\command"
+    ));
+    let _ = crate::windows_integration::delete_current_user_key(&format!(
+        r"{URL_PROTOCOL_SUBKEY}\shell\open"
+    ));
+    let _ = crate::windows_integration::delete_current_user_key(&format!(
+        r"{URL_PROTOCOL_SUBKEY}\shell"
+    ));
+    let _ = crate::windows_integration::delete_current_user_key(URL_PROTOCOL_SUBKEY);
+    let _ = crate::windows_integration::delete_current_user_key(&format!(
+        r"{DREAM_SKIN_URL_PROTOCOL_SUBKEY}\shell\open\command"
+    ));
+    let _ = crate::windows_integration::delete_current_user_key(&format!(
+        r"{DREAM_SKIN_URL_PROTOCOL_SUBKEY}\shell\open"
+    ));
+    let _ = crate::windows_integration::delete_current_user_key(&format!(
+        r"{DREAM_SKIN_URL_PROTOCOL_SUBKEY}\shell"
+    ));
+    let _ = crate::windows_integration::delete_current_user_key(DREAM_SKIN_URL_PROTOCOL_SUBKEY);
     let _ = crate::windows_integration::delete_current_user_key(LEGACY_UNINSTALL_SUBKEY);
     let _ = crate::windows_integration::delete_current_user_key(UNINSTALL_SUBKEY);
     Ok(())
@@ -112,7 +148,6 @@ fn create_entrypoint_shortcut(
 #[cfg(windows)]
 fn write_uninstall_registration(plan: &WindowsEntrypointPlan) -> anyhow::Result<()> {
     let _ = crate::windows_integration::delete_current_user_key(LEGACY_UNINSTALL_SUBKEY);
-    let uninstall_command = format!("\"{}\"", plan.manager_path);
     let install_location = Path::new(&plan.manager_path)
         .parent()
         .map(Path::to_path_buf)
@@ -125,11 +160,41 @@ fn write_uninstall_registration(plan: &WindowsEntrypointPlan) -> anyhow::Result<
         ("Publisher", "BigPizzaV3".to_string()),
         ("DisplayIcon", plan.manager_icon_path.clone()),
         ("InstallLocation", install_location),
-        ("UninstallString", uninstall_command.clone()),
-        ("QuietUninstallString", uninstall_command),
+        ("UninstallString", plan.uninstall_command.clone()),
+        ("QuietUninstallString", plan.quiet_uninstall_command.clone()),
     ] {
         crate::windows_integration::set_current_user_string_value(UNINSTALL_SUBKEY, name, &value)?;
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn register_url_protocol(manager_path: &str) -> anyhow::Result<()> {
+    register_url_protocol_key(
+        URL_PROTOCOL_SUBKEY,
+        "URL:Codex++ Import Protocol",
+        manager_path,
+    )?;
+    register_url_protocol_key(
+        DREAM_SKIN_URL_PROTOCOL_SUBKEY,
+        "URL:DreamSkin Community Theme Protocol",
+        manager_path,
+    )
+}
+
+#[cfg(windows)]
+fn register_url_protocol_key(
+    key: &str,
+    description: &str,
+    manager_path: &str,
+) -> anyhow::Result<()> {
+    crate::windows_integration::set_current_user_string_value(key, "", description)?;
+    crate::windows_integration::set_current_user_string_value(key, "URL Protocol", "")?;
+    crate::windows_integration::set_current_user_string_value(
+        &format!(r"{key}\shell\open\command"),
+        "",
+        &format!("\"{manager_path}\" \"%1\""),
+    )?;
     Ok(())
 }
 
