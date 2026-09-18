@@ -107,6 +107,7 @@
     threadTitle: "[data-thread-title]",
     appHeader: ".app-header-tint",
     nativeMenuBar: "[class*=\"ms-auto\"][class*=\"flex\"][class*=\"items-center\"]",
+    headerContextMenuSurface: '[data-testid="app-shell-header-context-menu-surface"]',
     archiveNav: 'button[aria-label="已归档对话"], button[aria-label="Archived conversations"]',
     disabledInstallButton: 'button:disabled, button[aria-disabled="true"], [role="button"][aria-disabled="true"], button[data-disabled], [role="button"][data-disabled], button.cursor-not-allowed, [role="button"].cursor-not-allowed, button.pointer-events-none, [role="button"].pointer-events-none',
     pluginNavButton: 'nav[role="navigation"] button.h-token-nav-row.w-full',
@@ -363,6 +364,128 @@
         border-color: #ef4444;
         background: #dc2626;
         color: #ffffff;
+      }
+      /* Dark theme overrides for delete-confirm and project-move dialogs.
+         Triggered either by Codex applying a "dark" class / data-theme="dark"
+         on its document root, or by the OS-level prefers-color-scheme hint.
+         Palette matches the existing Codex++ dark modal (.codex-plus-modal-content). */
+      html.dark .codex-delete-confirm-overlay,
+      html[data-theme="dark"] .codex-delete-confirm-overlay,
+      :root[data-theme="dark"] .codex-delete-confirm-overlay {
+        background: rgba(0,0,0,.55);
+      }
+      html.dark .codex-delete-confirm-content,
+      html[data-theme="dark"] .codex-delete-confirm-content,
+      :root[data-theme="dark"] .codex-delete-confirm-content {
+        border-color: rgba(255,255,255,.12);
+        background: #2b2b2b;
+        color: #f3f4f6;
+        box-shadow: 0 24px 80px rgba(0,0,0,.55);
+      }
+      html.dark .codex-delete-confirm-message,
+      html[data-theme="dark"] .codex-delete-confirm-message,
+      :root[data-theme="dark"] .codex-delete-confirm-message {
+        color: #d1d5db;
+      }
+      html.dark .codex-delete-confirm-actions button,
+      html[data-theme="dark"] .codex-delete-confirm-actions button,
+      :root[data-theme="dark"] .codex-delete-confirm-actions button {
+        border-color: rgba(255,255,255,.18);
+        background: #3f3f46;
+        color: #f3f4f6;
+      }
+      html.dark .codex-delete-confirm-actions [data-codex-delete-confirm="true"],
+      html[data-theme="dark"] .codex-delete-confirm-actions [data-codex-delete-confirm="true"],
+      :root[data-theme="dark"] .codex-delete-confirm-actions [data-codex-delete-confirm="true"] {
+        border-color: #ef4444;
+        background: #dc2626;
+        color: #ffffff;
+      }
+      html.dark .${projectMoveOverlayClass},
+      html[data-theme="dark"] .${projectMoveOverlayClass},
+      :root[data-theme="dark"] .${projectMoveOverlayClass} {
+        background: rgba(0,0,0,.55);
+      }
+      html.dark .codex-project-move-panel,
+      html[data-theme="dark"] .codex-project-move-panel,
+      :root[data-theme="dark"] .codex-project-move-panel {
+        border-color: rgba(255,255,255,.12);
+        background: #2b2b2b;
+        color: #f3f4f6;
+        box-shadow: 0 18px 60px rgba(0,0,0,.55);
+      }
+      html.dark .codex-project-move-header,
+      html[data-theme="dark"] .codex-project-move-header,
+      :root[data-theme="dark"] .codex-project-move-header {
+        border-bottom-color: rgba(255,255,255,.1);
+      }
+      html.dark .codex-project-move-item,
+      html[data-theme="dark"] .codex-project-move-item,
+      :root[data-theme="dark"] .codex-project-move-item {
+        color: #f3f4f6;
+      }
+      html.dark .codex-project-move-item:hover,
+      html.dark .codex-project-move-item:focus-visible,
+      html[data-theme="dark"] .codex-project-move-item:hover,
+      html[data-theme="dark"] .codex-project-move-item:focus-visible,
+      :root[data-theme="dark"] .codex-project-move-item:hover,
+      :root[data-theme="dark"] .codex-project-move-item:focus-visible {
+        background: rgba(255,255,255,.08);
+      }
+      html.dark .codex-project-move-item-path,
+      html[data-theme="dark"] .codex-project-move-item-path,
+      :root[data-theme="dark"] .codex-project-move-item-path,
+      html.dark .codex-project-move-empty,
+      html[data-theme="dark"] .codex-project-move-empty,
+      :root[data-theme="dark"] .codex-project-move-empty {
+        color: #9ca3af;
+      }
+      @media (prefers-color-scheme: dark) {
+        html:not(.light):not([data-theme="light"]) .codex-delete-confirm-overlay {
+          background: rgba(0,0,0,.55);
+        }
+        html:not(.light):not([data-theme="light"]) .codex-delete-confirm-content {
+          border-color: rgba(255,255,255,.12);
+          background: #2b2b2b;
+          color: #f3f4f6;
+          box-shadow: 0 24px 80px rgba(0,0,0,.55);
+        }
+        html:not(.light):not([data-theme="light"]) .codex-delete-confirm-message {
+          color: #d1d5db;
+        }
+        html:not(.light):not([data-theme="light"]) .codex-delete-confirm-actions button {
+          border-color: rgba(255,255,255,.18);
+          background: #3f3f46;
+          color: #f3f4f6;
+        }
+        html:not(.light):not([data-theme="light"]) .codex-delete-confirm-actions [data-codex-delete-confirm="true"] {
+          border-color: #ef4444;
+          background: #dc2626;
+          color: #ffffff;
+        }
+        html:not(.light):not([data-theme="light"]) .${projectMoveOverlayClass} {
+          background: rgba(0,0,0,.55);
+        }
+        html:not(.light):not([data-theme="light"]) .codex-project-move-panel {
+          border-color: rgba(255,255,255,.12);
+          background: #2b2b2b;
+          color: #f3f4f6;
+          box-shadow: 0 18px 60px rgba(0,0,0,.55);
+        }
+        html:not(.light):not([data-theme="light"]) .codex-project-move-header {
+          border-bottom-color: rgba(255,255,255,.1);
+        }
+        html:not(.light):not([data-theme="light"]) .codex-project-move-item {
+          color: #f3f4f6;
+        }
+        html:not(.light):not([data-theme="light"]) .codex-project-move-item:hover,
+        html:not(.light):not([data-theme="light"]) .codex-project-move-item:focus-visible {
+          background: rgba(255,255,255,.08);
+        }
+        html:not(.light):not([data-theme="light"]) .codex-project-move-item-path,
+        html:not(.light):not([data-theme="light"]) .codex-project-move-empty {
+          color: #9ca3af;
+        }
       }
       #${codexPlusMenuId}.${codexPlusMenuFloatingClass} {
         position: fixed;
@@ -717,6 +840,32 @@
     return { pluginEntryUnlock: true, forcePluginInstall: true, modelWhitelistUnlock: true, sessionDelete: true, markdownExport: true, projectMove: true, conversationTimeline: true, conversationView: false, conversationViewMaxWidth: conversationViewDefaultWidth, threadScrollRestore: true, zedRemoteOpen: true, upstreamWorktreeCreate: true, nativeMenuPlacement: true, serviceTierControls: false };
   }
 
+  const codexPlusBackendSettingMap = {
+    pluginEntryUnlock: "codexAppPluginEntryUnlock",
+    forcePluginInstall: "codexAppForcePluginInstall",
+    modelWhitelistUnlock: "codexAppModelWhitelistUnlock",
+    sessionDelete: "codexAppSessionDelete",
+    markdownExport: "codexAppMarkdownExport",
+    projectMove: "codexAppProjectMove",
+    conversationTimeline: "codexAppConversationTimeline",
+    conversationView: "codexAppConversationView",
+    threadScrollRestore: "codexAppThreadScrollRestore",
+    zedRemoteOpen: "codexAppZedRemoteOpen",
+    upstreamWorktreeCreate: "codexAppUpstreamWorktreeCreate",
+    nativeMenuPlacement: "codexAppNativeMenuPlacement",
+    serviceTierControls: "codexAppServiceTierControls",
+  };
+
+  function backendCodexPlusSettings() {
+    const settings = {};
+    Object.entries(codexPlusBackendSettingMap).forEach(([localKey, backendKey]) => {
+      if (typeof codexPlusBackendSettings[backendKey] === "boolean") {
+        settings[localKey] = codexPlusBackendSettings[backendKey];
+      }
+    });
+    return settings;
+  }
+
   function codexPlusSettings() {
     const relayPatchDisabled = codexPlusBackendSettings.launchMode === "relay";
     if (codexPlusBackendSettings.enhancementsEnabled === false) {
@@ -738,14 +887,14 @@
       };
     }
     try {
-      const settings = { ...defaultCodexPlusSettings(), ...JSON.parse(localStorage.getItem(codexPlusSettingsKey) || "{}") };
+      const settings = { ...defaultCodexPlusSettings(), ...JSON.parse(localStorage.getItem(codexPlusSettingsKey) || "{}"), ...backendCodexPlusSettings() };
       if (relayPatchDisabled) {
         settings.pluginEntryUnlock = false;
         settings.forcePluginInstall = false;
       }
       return settings;
     } catch {
-      const settings = defaultCodexPlusSettings();
+      const settings = { ...defaultCodexPlusSettings(), ...backendCodexPlusSettings() };
       if (relayPatchDisabled) {
         settings.pluginEntryUnlock = false;
         settings.forcePluginInstall = false;
@@ -755,6 +904,11 @@
   }
 
   function setCodexPlusSetting(key, value) {
+    const backendKey = codexPlusBackendSettingMap[key];
+    if (backendKey) {
+      setBackendSetting(backendKey, value);
+      return;
+    }
     let stored = {};
     try {
       stored = JSON.parse(localStorage.getItem(codexPlusSettingsKey) || "{}");
@@ -1418,7 +1572,7 @@
         return;
       }
       if (attempt < 60) {
-        setTimeout(() => loadBackendSettingsForStartup(attempt + 1), 500);
+        setTimeout(() => loadBackendSettingsForStartup(attempt + 1), 250);
       }
     });
   }
@@ -1513,17 +1667,31 @@
   let codexPlusBackendStatus = { status: "checking", message: "Đang kiểm tra backend…" };
   let codexPlusBackendCheckSeq = 0;
 
+  function setCodexPlusTriggerLabel(trigger) {
+    if (!trigger) return;
+    let label = trigger.querySelector("[data-codex-plus-trigger-label]");
+    if (!label) {
+      label = document.createElement("span");
+      label.dataset.codexPlusTriggerLabel = "true";
+      trigger.appendChild(label);
+    }
+    label.textContent = `Codex++ ${codexPlusVersion}`;
+  }
+
+  function ensureCodexPlusTriggerIndicator(trigger) {
+    if (!trigger) return null;
+    let indicator = trigger.querySelector("[data-codex-backend-indicator]");
+    if (!indicator) {
+      indicator = document.createElement("span");
+      indicator.className = "codex-plus-backend-indicator";
+      indicator.dataset.codexBackendIndicator = "true";
+      trigger.prepend(indicator);
+    }
+    return indicator;
+  }
+
   function renderBackendStatus() {
     const status = codexPlusBackendStatus.status || "failed";
-    if (codexPlusBackendStatus.version) {
-      codexPlusVersion = codexPlusBackendStatus.version;
-      document.querySelectorAll("[data-codex-plus-version]").forEach((node) => {
-        node.textContent = `Codex++ ${codexPlusVersion}`;
-      });
-      document.querySelectorAll(`#${codexPlusMenuId} .codex-plus-trigger`).forEach((node) => {
-        node.textContent = `Codex++ ${codexPlusVersion}`;
-      });
-    }
     const label = document.querySelector("[data-codex-backend-status]");
     if (label) {
       label.dataset.status = status;
@@ -1857,11 +2025,19 @@
               <button type="button" class="codex-plus-action-button" data-codex-open-devtools="true">Mở DevTools</button>
             </div>
             <div class="codex-plus-row">
-              <div><div class="codex-plus-row-title">Về Codex++</div><div class="codex-plus-about">Codex++ là menu tăng cường được inject qua launcher bên ngoài, không sửa file cài đặt gốc của Codex App.<br>Build: <span data-codex-plus-build="true">${codexPlusBuild}</span><br>GitHub: <a href="https://github.com/BigPizzaV3/CodexPlusPlus" target="_blank" rel="noreferrer">https://github.com/BigPizzaV3/CodexPlusPlus</a><br>Discord: <a href="https://discord.gg/y96kX7A76v" target="_blank" rel="noreferrer">https://discord.gg/y96kX7A76v</a></div></div>
+              <div><div class="codex-plus-row-title">关于 Codex++</div><div class="codex-plus-about">Codex++ 是通过外部 launcher 注入的增强菜单，不修改 Codex App 原始安装文件。<br>Build: <span data-codex-plus-build="true">${codexPlusBuild}</span><br>GitHub: <a href="https://github.com/BigPizzaV3/CodexPlusPlus" target="_blank" rel="noreferrer">https://github.com/BigPizzaV3/CodexPlusPlus</a><br>Discord: <a href="https://discord.gg/y96kX7A76v" target="_blank" rel="noreferrer">https://discord.gg/y96kX7A76v</a><br>Telegram: <a href="https://t.me/CodexPlusPlus" target="_blank" rel="noreferrer">https://t.me/CodexPlusPlus</a></div></div>
             </div>
             <div class="codex-plus-row">
               <div><div class="codex-plus-row-title">Cộng đồng Discord</div><div class="codex-plus-row-description">Tham gia Discord để nhận cập nhật, phản hồi lỗi hoặc trao đổi trải nghiệm sử dụng.</div></div>
               <button type="button" class="codex-plus-action-button" data-codex-plus-discord="true">Mở Discord</button>
+            </div>
+            <div class="codex-plus-row">
+              <div><div class="codex-plus-row-title">Telegram 频道</div><div class="codex-plus-row-description">加入 Telegram 获取更新消息和交流使用体验。</div></div>
+              <button type="button" class="codex-plus-action-button" data-codex-plus-telegram="true">打开 Telegram</button>
+            </div>
+            <div class="codex-plus-row">
+              <div><div class="codex-plus-row-title">Telegram 频道</div><div class="codex-plus-row-description">加入 Telegram 获取更新消息和交流使用体验。</div></div>
+              <button type="button" class="codex-plus-action-button" data-codex-plus-telegram="true">打开 Telegram</button>
             </div>
             <div class="codex-plus-row">
               <div><div class="codex-plus-row-title">Báo vấn đề</div><div class="codex-plus-row-description">Mở GitHub Issues để gửi lỗi hoặc góp ý.</div></div>
@@ -1933,6 +2109,10 @@
       }
       if (target?.closest("[data-codex-plus-discord]")) {
         window.open("https://discord.gg/y96kX7A76v", "_blank");
+        return;
+      }
+      if (target?.closest("[data-codex-plus-telegram]")) {
+        window.open("https://t.me/CodexPlusPlus", "_blank");
         return;
       }
       if (target?.closest("[data-codex-backend-repair]")) {
@@ -2023,7 +2203,6 @@
     refreshCodexPlusBackendToggles();
     renderBackendStatus();
     loadBackendSettings();
-    loadSavedAccounts();
     void loadCodexServiceTierState();
     loadUserScripts();
   }
@@ -2032,9 +2211,17 @@
     if (!codexPlusSettings().nativeMenuPlacement) return null;
     const header = document.querySelector(selectors.appHeader);
     const menuBar = header?.querySelector(selectors.nativeMenuBar);
-    if (!menuBar) return null;
-    const buttons = Array.from(menuBar.querySelectorAll("button")).filter((button) => !button.closest(`#${codexPlusMenuId}`));
-    return { parent: menuBar, before: buttons[buttons.length - 1]?.nextSibling || null, nativeButtonClass: buttons[buttons.length - 1]?.className || "" };
+    if (menuBar) {
+      const buttons = Array.from(menuBar.querySelectorAll("button")).filter((button) => !button.closest(`#${codexPlusMenuId}`));
+      return { parent: menuBar, before: buttons[buttons.length - 1]?.nextSibling || null, nativeButtonClass: buttons[buttons.length - 1]?.className || "" };
+    }
+    const contextSurface = header?.querySelector(selectors.headerContextMenuSurface);
+    const buttons = Array.from(contextSurface?.querySelectorAll?.("button") || [])
+      .filter((button) => !button.closest(`#${codexPlusMenuId}`) && button.getBoundingClientRect().width > 0 && button.getBoundingClientRect().height > 0);
+    const nativeButton = buttons.find((button) => !button.parentElement?.classList?.contains("inline-flex")) || buttons[0];
+    const parent = nativeButton?.parentElement;
+    if (!parent) return null;
+    return { parent, before: nativeButton, nativeButtonClass: nativeButton.className || "" };
   }
 
   function removeDuplicateCodexPlusMenus(keep) {
@@ -2048,9 +2235,22 @@
     });
   }
 
+  function normalizeCodexPlusTriggerClassName(className) {
+    const classes = String(className || "").split(/\s+/).filter(Boolean);
+    const incompatibleNativeGroupClasses = new Set(["gap-0", "rounded-l-none", "border-l-0", "pl-0.5", "pr-1.5"]);
+    const hasIncompatibleNativeGroupClass = classes.some((name) => incompatibleNativeGroupClasses.has(name));
+    const normalized = classes.filter((name) => !incompatibleNativeGroupClasses.has(name));
+    if (hasIncompatibleNativeGroupClass) {
+      ["gap-1", "rounded-lg", "border-l", "px-2"].forEach((name) => {
+        if (!normalized.includes(name)) normalized.push(name);
+      });
+    }
+    return normalized.join(" ");
+  }
+
   function configureCodexPlusTrigger(menu, trigger, nativeButtonClass) {
     if (!trigger) return;
-    if (nativeButtonClass) trigger.className = nativeButtonClass;
+    if (nativeButtonClass) trigger.className = normalizeCodexPlusTriggerClassName(nativeButtonClass);
     if (trigger.dataset.codexPlusTriggerInstalled === "5") return;
     trigger.dataset.codexPlusTriggerInstalled = "5";
     trigger.addEventListener("click", (event) => {
@@ -2128,6 +2328,13 @@
       configureCodexPlusTrigger(existing, existing.querySelector("button"), insertionPoint.nativeButtonClass);
       removeDuplicateCodexPlusMenus(existing);
       return;
+    } else if (existing && insertionPoint) {
+      configureCodexPlusTrigger(existing, existing.querySelector("button"), insertionPoint.nativeButtonClass);
+      existing.className = "";
+      const safeBefore = insertionPoint.before?.parentElement === insertionPoint.parent ? insertionPoint.before : null;
+      insertionPoint.parent.insertBefore(existing, safeBefore);
+      removeDuplicateCodexPlusMenus(existing);
+      return;
     }
     const menu = document.createElement("div");
     menu.id = codexPlusMenuId;
@@ -2135,12 +2342,9 @@
     menu.dataset.codexPlusMenuVersion = "6";
     const trigger = document.createElement("button");
     trigger.type = "button";
-    trigger.textContent = `Codex++ ${codexPlusVersion}`;
-    const indicator = document.createElement("span");
-    indicator.className = "codex-plus-backend-indicator";
-    indicator.dataset.codexBackendIndicator = "true";
-    indicator.dataset.status = codexPlusBackendStatus.status || "checking";
-    trigger.prepend(indicator);
+    const indicator = ensureCodexPlusTriggerIndicator(trigger);
+    if (indicator) indicator.dataset.status = codexPlusBackendStatus.status || "checking";
+    setCodexPlusTriggerLabel(trigger);
     const nativeButtonClass = insertionPoint?.nativeButtonClass || "codex-plus-trigger";
     configureCodexPlusTrigger(menu, trigger, nativeButtonClass);
     menu.appendChild(trigger);

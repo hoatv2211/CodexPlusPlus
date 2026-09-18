@@ -9,7 +9,6 @@ use toml_edit::{DocumentMut, Item, Table, TableLike};
 use crate::settings::{RelayContextSelection, RelayProfile, RelayProtocol};
 
 const RELAY_PROVIDER: &str = "custom";
-const STABLE_RELAY_PROVIDER: &str = RELAY_PROVIDER;
 const LEGACY_RELAY_PROVIDERS: &[&str] = &["CodexPlusPlus", "CodexPP"];
 const CHAT_UPSTREAM_BASE_URL_KEY: &str = "codex_plus_chat_base_url";
 const RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
@@ -197,6 +196,7 @@ pub fn chatgpt_auth_status_from_home(home: &Path) -> ChatGptAuthStatus {
 pub fn relay_config_status_from_home(home: &Path) -> RelayConfigStatus {
     let config_path = home.join("config.toml");
     let contents = std::fs::read_to_string(&config_path).unwrap_or_default();
+    let auth_contents = std::fs::read_to_string(home.join("auth.json")).unwrap_or_default();
     let root_provider = root_key_string(&contents, "model_provider");
     let provider = root_provider
         .as_ref()
@@ -220,7 +220,7 @@ pub fn relay_config_status_from_home(home: &Path) -> RelayConfigStatus {
     RelayConfigStatus {
         configured: root_provider.is_some()
             && requires_openai_auth
-            && has_bearer_token
+            && (has_bearer_token || codex_auth_api_key(&auth_contents).is_some())
             && has_base_url,
         requires_openai_auth,
         has_bearer_token,
@@ -296,9 +296,8 @@ pub fn apply_relay_files_to_home(
     }
     std::fs::create_dir_all(home)?;
 
-    let config_contents = normalize_live_config_model_provider(home, config_contents)?;
     let backup_path =
-        write_codex_live_atomic(home, Some(&config_contents), Some(auth_contents.as_bytes()))?;
+        write_codex_live_atomic(home, Some(config_contents), Some(auth_contents.as_bytes()))?;
 
     let status = relay_config_status_from_home(home);
     Ok(RelayApplyResult {
@@ -373,15 +372,10 @@ pub fn apply_relay_profile_to_home_with_switch_rules(
     )?;
 
     if profile.relay_mode == crate::settings::RelayMode::PureApi {
-        let config_for_live =
-            prepare_provider_live_config_from_auth(&profile.auth_contents, &config_with_limits)?;
-        apply_relay_files_to_home(home, &config_for_live, &profile.auth_contents)
-    } else if profile_should_write_auth_json(profile) {
         apply_relay_files_to_home(home, &config_with_limits, &profile.auth_contents)
     } else {
-        let config_for_live =
-            prepare_provider_live_config_from_auth(&profile.auth_contents, &config_with_limits)?;
-        apply_relay_config_file_to_home(home, &config_for_live)
+        let auth_contents = official_profile_auth_for_switch(home, &profile.auth_contents)?;
+        apply_relay_files_to_home(home, &config_with_limits, &auth_contents)
     }
 }
 
@@ -414,8 +408,7 @@ pub fn apply_relay_config_file_to_home(
     }
     std::fs::create_dir_all(home)?;
 
-    let config_contents = normalize_live_config_model_provider(home, config_contents)?;
-    let backup_path = write_codex_live_atomic(home, Some(&config_contents), None)?;
+    let backup_path = write_codex_live_atomic(home, Some(config_contents), None)?;
 
     let status = relay_config_status_from_home(home);
     Ok(RelayApplyResult {
@@ -614,6 +607,7 @@ pub fn backfill_relay_profile_from_home_with_common(
         restore_profile_provider_id_for_backfill(&profile.config_contents, &template_config)?;
     profile.auth_contents = read_optional_text(&home.join("auth.json"))?;
     restore_profile_auth_from_live_config(profile, &template_auth)?;
+    sync_profile_mode_from_backfilled_live(profile);
     if profile.model.trim().is_empty() {
         if let Some(model) = root_key_string(&live_config, "model") {
             profile.model = model;
@@ -830,36 +824,6 @@ fn write_codex_live_atomic(
     }
 
     Ok(backup_path)
-}
-
-fn normalize_live_config_model_provider(home: &Path, config_text: &str) -> anyhow::Result<String> {
-    let current_config = read_optional_text(&home.join("config.toml"))?;
-    normalize_config_model_provider(config_text, current_config.as_str())
-}
-
-fn normalize_config_model_provider(
-    config_text: &str,
-    current_config: &str,
-) -> anyhow::Result<String> {
-    let mut doc = parse_toml_document(config_text)?;
-    let Some(target_provider) = active_provider_id(&doc) else {
-        return Ok(ensure_trailing_newline(doc.to_string()));
-    };
-    if !is_custom_provider_id(&target_provider) || !provider_table_exists(&doc, &target_provider) {
-        return Ok(ensure_trailing_newline(doc.to_string()));
-    }
-
-    let stable_provider = STABLE_RELAY_PROVIDER.to_string();
-    if stable_provider == target_provider {
-        return Ok(ensure_trailing_newline(doc.to_string()));
-    }
-
-    let _ = current_config;
-
-    rename_provider_table(&mut doc, &target_provider, &stable_provider);
-    set_provider_id(&mut doc, &stable_provider);
-    rewrite_profile_provider_refs(&mut doc, &target_provider, &stable_provider);
-    Ok(ensure_trailing_newline(doc.to_string()))
 }
 
 fn active_provider_id(doc: &DocumentMut) -> Option<String> {
@@ -1358,25 +1322,6 @@ fn set_provider_id(doc: &mut DocumentMut, provider_id: &str) {
     doc["model_provider"] = toml_edit::value(provider_id);
 }
 
-fn profile_should_write_auth_json(profile: &RelayProfile) -> bool {
-    profile.relay_mode == crate::settings::RelayMode::Official
-}
-
-fn prepare_provider_live_config_from_auth(
-    auth_contents: &str,
-    config_contents: &str,
-) -> anyhow::Result<String> {
-    let token = codex_auth_api_key(auth_contents).or_else(|| {
-        experimental_bearer_token_from_config(config_contents)
-            .ok()
-            .flatten()
-    });
-    let Some(token) = token else {
-        return Ok(config_contents.to_string());
-    };
-    set_experimental_bearer_token_in_config(config_contents, &token)
-}
-
 fn restore_profile_provider_id_for_backfill(
     live_config: &str,
     template_config: &str,
@@ -1393,6 +1338,9 @@ fn restore_profile_provider_id_for_backfill(
         return Ok(ensure_trailing_newline(doc.to_string()));
     };
     if live_provider_id == template_provider_id {
+        return Ok(ensure_trailing_newline(doc.to_string()));
+    }
+    if live_provider_id != RELAY_PROVIDER || template_provider_id == RELAY_PROVIDER {
         return Ok(ensure_trailing_newline(doc.to_string()));
     }
     if !provider_table_exists(&doc, &live_provider_id) {
@@ -1423,12 +1371,24 @@ fn restore_profile_auth_from_live_config(
     let Some(token) = experimental_bearer_token_from_config(&profile.config_contents)? else {
         return Ok(());
     };
-    profile.config_contents =
-        remove_experimental_bearer_token_from_config(&profile.config_contents)?;
+    profile.api_key = token.clone();
 
-    if !profile.auth_contents.trim().is_empty() {
+    if profile.relay_mode == crate::settings::RelayMode::Official && profile.official_mix_api_key {
+        profile.auth_contents = remove_openai_api_key_from_auth_contents(&profile.auth_contents)?;
         return Ok(());
     }
+
+    if !profile.auth_contents.trim().is_empty() {
+        if codex_auth_api_key(&profile.auth_contents).is_none() {
+            return Ok(());
+        }
+        profile.config_contents =
+            remove_experimental_bearer_token_from_config(&profile.config_contents)?;
+        return Ok(());
+    }
+
+    profile.config_contents =
+        remove_experimental_bearer_token_from_config(&profile.config_contents)?;
 
     let mut auth = if template_auth.trim().is_empty() {
         json!({})
@@ -1445,6 +1405,34 @@ fn restore_profile_auth_from_live_config(
     }
     profile.auth_contents = serde_json::to_string_pretty(&auth)?;
     Ok(())
+}
+
+fn sync_profile_mode_from_backfilled_live(profile: &mut RelayProfile) {
+    if codex_auth_api_key(&profile.auth_contents)
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        profile.relay_mode = crate::settings::RelayMode::PureApi;
+        profile.official_mix_api_key = false;
+        return;
+    }
+
+    let has_provider_endpoint = provider_string_from_config(&profile.config_contents, "base_url")
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    if has_provider_endpoint || !profile.api_key.trim().is_empty() {
+        profile.relay_mode = crate::settings::RelayMode::Official;
+        profile.official_mix_api_key = true;
+    }
+}
+
+fn official_profile_auth_for_switch(home: &Path, auth_contents: &str) -> anyhow::Result<String> {
+    let source = if auth_contents.trim().is_empty() {
+        read_optional_text(&home.join("auth.json"))?
+    } else {
+        auth_contents.to_string()
+    };
+    remove_openai_api_key_from_auth_contents(&source)
 }
 
 fn codex_auth_api_key(auth_contents: &str) -> Option<String> {
@@ -1494,6 +1482,13 @@ fn relay_profile_base_url(profile: &RelayProfile) -> String {
 }
 
 fn relay_profile_api_key(profile: &RelayProfile) -> String {
+    if profile.relay_mode == crate::settings::RelayMode::Official {
+        return experimental_bearer_token_from_config(&profile.config_contents)
+            .ok()
+            .flatten()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| profile.api_key.trim().to_string());
+    }
     codex_auth_api_key(&profile.auth_contents)
         .or_else(|| {
             experimental_bearer_token_from_config(&profile.config_contents)
@@ -1555,7 +1550,9 @@ fn complete_relay_profile_config(profile: &RelayProfile) -> anyhow::Result<Strin
     if !provider_base_url.trim().is_empty() {
         provider["base_url"] = toml_edit::value(provider_base_url.trim());
     }
-    if !api_key.trim().is_empty() {
+    if profile.relay_mode == crate::settings::RelayMode::PureApi {
+        provider.remove("experimental_bearer_token");
+    } else if !api_key.trim().is_empty() {
         provider["experimental_bearer_token"] = toml_edit::value(api_key.trim());
     }
 
@@ -1572,22 +1569,49 @@ pub fn normalize_relay_profile_for_storage(profile: &mut RelayProfile) -> anyhow
         profile.base_url.clear();
         profile.upstream_base_url.clear();
         profile.api_key.clear();
+        profile.auth_contents = remove_openai_api_key_from_auth_contents(&profile.auth_contents)?;
         return Ok(());
     }
     let source_base_url = relay_profile_base_url(profile);
-    if !profile.config_contents.trim().is_empty() {
+    let source_api_key = relay_profile_api_key(profile);
+    if !profile.config_contents.trim().is_empty()
+        || profile.relay_mode == crate::settings::RelayMode::PureApi
+        || profile.official_mix_api_key
+    {
         profile.config_contents = complete_relay_profile_config(profile)?;
     }
-    if profile.auth_contents.trim().is_empty() && !profile.api_key.trim().is_empty() {
+    if profile.relay_mode == crate::settings::RelayMode::PureApi
+        && profile.auth_contents.trim().is_empty()
+        && !source_api_key.trim().is_empty()
+    {
         profile.auth_contents = serde_json::to_string_pretty(&json!({
-            "OPENAI_API_KEY": profile.api_key.trim()
+            "OPENAI_API_KEY": source_api_key.trim()
         }))?;
+    }
+    if profile.relay_mode == crate::settings::RelayMode::Official {
+        profile.auth_contents = remove_openai_api_key_from_auth_contents(&profile.auth_contents)?;
     }
     profile.model = relay_profile_model(profile);
     profile.upstream_base_url = source_base_url.clone();
     profile.base_url = source_base_url;
     profile.api_key = relay_profile_api_key(profile);
     Ok(())
+}
+
+fn remove_openai_api_key_from_auth_contents(auth_contents: &str) -> anyhow::Result<String> {
+    if auth_contents.trim().is_empty() {
+        return Ok(String::new());
+    }
+    let mut value =
+        serde_json::from_str::<Value>(auth_contents).with_context(|| "auth.json JSON 解析失败")?;
+    let Some(object) = value.as_object_mut() else {
+        anyhow::bail!("auth.json 必须是 JSON 对象");
+    };
+    object.remove("OPENAI_API_KEY");
+    if object.is_empty() {
+        return Ok(String::new());
+    }
+    Ok(format!("{}\n", serde_json::to_string_pretty(&value)?))
 }
 
 fn provider_string_from_config(config_contents: &str, key: &str) -> Option<String> {
@@ -1623,9 +1647,13 @@ fn provider_string_from_config(config_contents: &str, key: &str) -> Option<Strin
 
 fn experimental_bearer_token_from_config(config_contents: &str) -> anyhow::Result<Option<String>> {
     let doc = parse_toml_document(config_contents)?;
-    for provider in provider_tables(&doc) {
-        if let Some(token) = provider
-            .get("experimental_bearer_token")
+    if let Some(provider_id) = active_provider_id(&doc) {
+        if let Some(token) = doc
+            .get("model_providers")
+            .and_then(Item::as_table)
+            .and_then(|providers| providers.get(&provider_id))
+            .and_then(Item::as_table)
+            .and_then(|provider| provider.get("experimental_bearer_token"))
             .and_then(Item::as_str)
             .map(str::trim)
             .filter(|token| !token.is_empty())
@@ -1634,37 +1662,6 @@ fn experimental_bearer_token_from_config(config_contents: &str) -> anyhow::Resul
         }
     }
     Ok(None)
-}
-
-fn set_experimental_bearer_token_in_config(
-    config_contents: &str,
-    token: &str,
-) -> anyhow::Result<String> {
-    let mut doc = parse_toml_document(config_contents)?;
-    let Some(provider_id) = active_provider_id(&doc) else {
-        doc.as_table_mut()
-            .insert("experimental_bearer_token", toml_edit::value(token));
-        return Ok(ensure_trailing_newline(doc.to_string()));
-    };
-
-    if !is_custom_provider_id(&provider_id) {
-        doc.as_table_mut()
-            .insert("experimental_bearer_token", toml_edit::value(token));
-        return Ok(ensure_trailing_newline(doc.to_string()));
-    }
-
-    if let Some(provider) = doc
-        .get_mut("model_providers")
-        .and_then(Item::as_table_mut)
-        .and_then(|providers| providers.get_mut(&provider_id))
-        .and_then(Item::as_table_mut)
-    {
-        provider["experimental_bearer_token"] = toml_edit::value(token);
-    } else {
-        doc.as_table_mut()
-            .insert("experimental_bearer_token", toml_edit::value(token));
-    }
-    Ok(ensure_trailing_newline(doc.to_string()))
 }
 
 fn remove_experimental_bearer_token_from_config(config_contents: &str) -> anyhow::Result<String> {
@@ -1924,26 +1921,6 @@ fn account_label_from_jwt(token: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn normalize_live_config_model_provider_rewrites_custom_provider_id_to_stable_bucket() {
-        let temp = tempfile::tempdir().unwrap();
-        std::fs::write(
-            temp.path().join("config.toml"),
-            "model_provider = \"ai\"\n\n[model_providers.ai]\nname = \"ai\"\nwire_api = \"responses\"\nbase_url = \"https://ahg.codes\"\n",
-        )
-        .unwrap();
-
-        let normalized = normalize_live_config_model_provider(
-            temp.path(),
-            "model_provider = \"ai\"\n\n[model_providers.ai]\nname = \"ai\"\nwire_api = \"responses\"\nbase_url = \"https://ahg.codes\"\n",
-        )
-        .unwrap();
-
-        assert!(normalized.contains("model_provider = \"custom\""));
-        assert!(normalized.contains("[model_providers.custom]"));
-        assert!(!normalized.contains("[model_providers.ai]"));
-    }
 
     #[test]
     fn backfill_relay_profile_from_home_with_common_restores_template_provider_id() {

@@ -124,9 +124,11 @@ Windows 安装包会创建桌面和开始菜单快捷方式。macOS DMG 会安�
   </tr>
   <tr>
     <td align="center">
-      <img src="docs/images/sponsor-cubence.png" alt="Cubence" height="80">
+      <a href="https://cubence.com?source=codexplusplus">
+        <img src="docs/images/sponsor-cubence.png" alt="Cubence" height="80">
+      </a>
     </td>
-    <td><strong>Cubence</strong><br>感谢 Cubence 对本项目的支持。Cubence 是一家致力为客户提供稳定、高效的 API 中转服务商。从 25 年 9 月运营至今，提供了 Claude Code、Codex、Gemini 等多种模型支持。Cubence 为本开源项目多用户提供了特别的专属优惠 <code>CODEXPLUSPLUS</code>，在首次购买时享受 8.8 折优惠！</td>
+    <td><a href="https://cubence.com?source=codexplusplus"><strong>Cubence</strong></a><br>感谢 Cubence 对本项目的支持。Cubence 是一家致力为客户提供稳定、高效的 API 中转服务商。从 25 年 9 月运营至今，提供了 Claude Code、Codex、Gemini 等多种模型支持。Cubence 为本开源项目多用户提供了特别的专属优惠 <code>CODEXPLUSPLUS</code>，在首次购买时享受 8.8 折优惠！</td>
   </tr>
   <tr>
     <td align="center">
@@ -141,6 +143,10 @@ Windows 安装包会创建桌面和开始菜单快捷方式。macOS DMG 会安�
 ## 交流与支持
 
 欢迎扫码加入 Codex++ 交流群（QQ群：1103050832），反馈问题、交流使用体验或提出新功能建议：
+
+下方微信群二维码如果已满人，可以<a href="https://docs.qq.com/doc/DQ2VOanZTTFZJcUpZ#">点击这里获取最新微信群二维码</a>。
+
+Telegram 频道：<https://t.me/CodexPlusPlus>
 
 <img src="docs/images/discussion-group-qr.jpg" alt="Codex++ 交流群二维码" width="260">
 
@@ -270,7 +276,18 @@ git worktree add -b <new-branch> <worktree-path> upstream/<base-branch>
 
 ### macOS 提示无法打开或已损坏
 
-当前安装包未签名/未公证时，macOS Gatekeeper 可能拦截。可以在“系统设置 - 隐私与安全性”中允许打开。正式分发建议配置 Apple Developer ID 签名和 notarization。
+当前安装包未签名/未公证时，macOS Gatekeeper 可能拦截，出现“已损坏，无法打开”的提示：
+
+![macOS 提示 Codex++ 管理工具已损坏](docs/images/macos-damaged-warning.png)
+
+如果遇到该提示，可以在终端执行下面两条命令，解除苹果系统的安全隔离限制：
+
+```bash
+sudo xattr -rd com.apple.quarantine /Applications/Codex++\ 管理工具.app
+sudo xattr -rd com.apple.quarantine /Applications/Codex++.app
+```
+
+执行后重新打开 `Codex++` 或 `Codex++ 管理工具` 即可。
 
 ### macOS Intel 能用吗
 
